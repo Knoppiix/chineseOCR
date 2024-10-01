@@ -1,6 +1,6 @@
 ## Chinese OCR Tool - Project in progress
 ### API
-Simple PaddleOCR API built in Python/Flask. I'm planning to rebuild it using FastAPI.
+Simple [PaddleOCR API](https://github.com/PaddlePaddle/PaddleOCR) built in Python/Flask. I'm planning to rebuild it using FastAPI.
 
 ### Interface
 .NET Windows Form in C# made to interact with the PaddleOCR API. 
