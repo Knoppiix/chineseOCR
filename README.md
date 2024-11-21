@@ -5,3 +5,6 @@ Simple [PaddleOCR API](https://github.com/PaddlePaddle/PaddleOCR) built in Pytho
 ### Interface
 .NET Windows Form in C# made to interact with the PaddleOCR API. 
 The form consists in a screenshotter tool, which then parses the API output to show the result. 
+
+### Credits
+- **CFDICT**, an opensource chinese-to-french dictionnary (see: https://chine.in/mandarin/dictionnaire/CFDICT/)
