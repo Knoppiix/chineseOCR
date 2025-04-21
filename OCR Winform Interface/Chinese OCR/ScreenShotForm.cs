@@ -123,18 +123,19 @@ namespace Chinese_OCR
             {
 
                 using (var httpClient = new HttpClient())
-                using (var content = new ByteArrayContent(imageData))
+                using (var multipartContent = new MultipartFormDataContent())
                 {
                     httpClient.Timeout = new TimeSpan(1, 1, 1);
+                    
+                    var imageContent = new ByteArrayContent(imageData);
+                    imageContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+                    multipartContent.Add(imageContent, "file", "screenshot.png");  // "file" is the field name expected by FastAPI
 
-                    content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
-
-                    // Send the PUT request
-                    var response = await httpClient.PutAsync("http://127.0.0.1:5000/ocr", content);
-
+                    var response = await httpClient.PutAsync("http://127.0.0.1:5000/ocr", multipartContent);
+                    
                     // Ensure the request was successful
                     response.EnsureSuccessStatusCode();
-
+                    
                     // Read the response content
                     string responseBody = await response.Content.ReadAsStringAsync();
 
