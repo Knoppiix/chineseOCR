@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    />
+    <meta
+      http-equiv="X-Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    />
+    <title>OCR App</title>
+  </head>
+  <body>
+    <h1>OCR App</h1>
+    
+    <div style="margin-top: 20px;">
+      <div id="loading-indicator" style="display: none;">Loading...</div>
+      <canvas id="screenshot-canvas" style="border: 1px solid black;"></canvas>
+      <div id="hover-text" style="position: absolute; background-color: yellow; padding: 5px; border: 1px solid black; display: none;"></div>
+    </div>
+    <script src="./renderer.js"></script>
+  </body>
+</html>
