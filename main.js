@@ -13,14 +13,17 @@ let dictionary = null;
 function parseCedict() {
     const cedictPath = path.join(__dirname, 'cedict_1_0_ts_utf-8_mdbg.txt');
     const dictionaryData = fs.readFileSync(cedictPath, 'utf-8');
-    const lines = dictionaryData.split(/\n/);
+    const lines = dictionaryData.split(/\r?\n/);
     const parsedDict = new Map();
+    let processedLines = 0;
+    let failedLines = 0;
 
     for (const line of lines) {
+        processedLines++;
         if (line.startsWith('#') || line.trim() === '') {
             continue;
         }
-        const match = line.match(/([^\s]+)\s+([^\s]+)\s+\[([^\]]+)\]\s+\/(.+)\/$/u);
+        const match = line.match(/([^\s]+)\s+([^\s]+)\s+\[([^\]]+)\]\s+\/(.+)\//u);
         if (match) {
             const traditional = match[1];
             const simplified = match[2];
@@ -32,9 +35,14 @@ function parseCedict() {
             if (traditional) {
                 parsedDict.set(traditional, { pinyin, english });
             }
+        } else {
+            failedLines++;
+            if (failedLines < 20) { // Log the first 20 failing lines for inspection
+                console.log('Did not parse line:', line);
+            }
         }
     }
-    console.log(`Dictionary parsed with ${parsedDict.size} entries.`);
+    console.log(`Dictionary parsing complete. Total lines: ${processedLines}, Parsed entries: ${parsedDict.size}, Failed lines: ${failedLines}`);
     return parsedDict;
 }
 
@@ -217,7 +225,7 @@ const createWindow = () => {
   });
 
   mainWindow.loadFile('src/index.html');
-  mainWindow.webContents.openDevTools();
+  //mainWindow.webContents.openDevTools();
 
   mainWindow.on('close', (event) => {
     if (!app.isQuitting) {
