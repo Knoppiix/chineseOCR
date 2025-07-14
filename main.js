@@ -102,6 +102,7 @@ let mainWindow;
 let wordBookWindow;
 let pythonProcess = null;
 let tray = null;
+let selectionWindows = []; // Array to hold references to all selection windows
 const wordBookPath = path.join(app.getPath('userData'), 'wordbook.json');
 
 let wordBook = [];
@@ -164,7 +165,7 @@ const stopPythonApi = () => {
 };
 
 // Function to send image buffer to the OCR API
-const sendToOcrApi = async (imageBuffer, originalImageBuffer) => {
+const sendToOcrApi = async (imageBuffer, originalImageBuffer, isFullScreen = false) => {
   try {
     const form = new FormData();
     form.append('file', imageBuffer, {
@@ -225,7 +226,7 @@ const createWindow = () => {
   });
 
   mainWindow.loadFile('src/index.html');
-  //mainWindow.webContents.openDevTools();
+  mainWindow.webContents.openDevTools();
 
   mainWindow.on('close', (event) => {
     if (!app.isQuitting) {
@@ -261,31 +262,86 @@ const createWordBookWindow = () => {
 };
 
 const takeFullScreenshot = () => {
-  screenshot({ format: 'png' }).then((img) => {
-    console.log('Full screenshot taken.');
-    sendToOcrApi(img, img);
-  }).catch((err) => {
-    console.error('Failed to take full screenshot', err);
-  });
+  if (process.platform === 'linux') {
+    const { exec } = require('child_process');
+    exec('which scrot', (error) => {
+      if (error) {
+        dialog.showErrorBox('Dependency Missing', 'scrot is not installed. Please install it with \'sudo apt-get install scrot\' or your distribution\'s package manager.');
+        return;
+      }
+      screenshot({ format: 'png' }).then((img) => {
+        console.log('Full screenshot taken.');
+        sendToOcrApi(img, img);
+      }).catch((err) => {
+        console.error('Failed to take full screenshot', err);
+      });
+    });
+  } else {
+    screenshot({ format: 'png' }).then((img) => {
+      console.log('Full screenshot taken.');
+      sendToOcrApi(img, img);
+    }).catch((err) => {
+      console.error('Failed to take full screenshot', err);
+    });
+  }
 };
 
 const selectRegionScreenshot = () => {
-  const { width, height } = screen.getPrimaryDisplay().size;
-  const selectionWindow = new BrowserWindow({
-    x: 0,
-    y: 0,
-    width,
-    height,
-    frame: false,
-    transparent: true,
-    alwaysOnTop: true,
-    webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
-    },
-  });
-  selectionWindow.loadFile('src/selection.html');
+  if (process.platform === 'linux') {
+    const { exec } = require('child_process');
+    exec('which scrot', (error) => {
+      if (error) {
+        dialog.showErrorBox('Dependency Missing', 'scrot is not installed. Please install it with "sudo apt-get install scrot" or your distribution\'s package manager.');
+        return;
+      }
+      const displays = screen.getAllDisplays();
+      displays.forEach(display => {
+        const { x, y, width, height } = display.bounds;
+        const selectionWindow = new BrowserWindow({
+          x,
+          y,
+          width,
+          height,
+          frame: false,
+          transparent: true,
+          alwaysOnTop: true,
+          webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false,
+          },
+        });
+        selectionWindow.loadFile('src/selection.html');
+        selectionWindow.focus(); // Explicitly focus the window
+        selectionWindows.push(selectionWindow);
+
+        selectionWindow.on('closed', () => {
+          selectionWindows = selectionWindows.filter(win => win !== selectionWindow);
+        });
+      });
+    });
+  } else {
+    const displays = screen.getAllDisplays();
+    displays.forEach(display => {
+      const { x, y, width, height } = display.bounds;
+      const selectionWindow = new BrowserWindow({
+        x,
+        y,
+        width,
+        height,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        webPreferences: {
+          nodeIntegration: true,
+          contextIsolation: false,
+        },
+      });
+      selectionWindow.loadFile('src/selection.html');
+      selectionWindows.push(selectionWindow);
+    });
+  }
 };
+
 
 ipcMain.on('screenshot:region', (event, rect) => {
   screenshot({ format: 'png' }).then((img) => {
@@ -296,7 +352,7 @@ ipcMain.on('screenshot:region', (event, rect) => {
       })
       .then(buffer => {
         console.log('Region screenshot taken and cropped.');
-        sendToOcrApi(buffer, buffer);
+        sendToOcrApi(buffer, buffer, false);
       })
       .catch(err => {
         console.error('Failed to process region screenshot with Jimp', err);
@@ -338,6 +394,15 @@ ipcMain.on('wordbook:export', async () => {
       dialog.showErrorBox('Export Failed', `Failed to export word book: ${error.message}`);
     }
   }
+});
+
+ipcMain.on('selection:done', () => {
+  selectionWindows.forEach(win => {
+    if (!win.isDestroyed()) {
+      win.close();
+    }
+  });
+  selectionWindows = []; // Clear the array after closing all windows
 });
 
 // IPC handlers for translation
