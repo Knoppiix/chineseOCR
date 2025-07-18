@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, Menu, dialog, Tray } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Menu, dialog, Tray, desktopCapturer } = require('electron');
 const screenshot = require('screenshot-desktop');
 const path = require('path');
 const Jimp = require('jimp');
@@ -261,105 +261,57 @@ const createWordBookWindow = () => {
   });
 };
 
-const takeFullScreenshot = () => {
-  if (process.platform === 'linux') {
-    const { exec } = require('child_process');
-    exec('which scrot', (error) => {
-      if (error) {
-        dialog.showErrorBox('Dependency Missing', 'scrot is not installed. Please install it with \'sudo apt-get install scrot\' or your distribution\'s package manager.');
-        return;
-      }
-      screenshot({ format: 'png' }).then((img) => {
-        console.log('Full screenshot taken.');
-        sendToOcrApi(img, img);
-      }).catch((err) => {
-        console.error('Failed to take full screenshot', err);
-      });
-    });
-  } else {
-    screenshot({ format: 'png' }).then((img) => {
-      console.log('Full screenshot taken.');
-      sendToOcrApi(img, img);
-    }).catch((err) => {
-      console.error('Failed to take full screenshot', err);
-    });
+const takeFullScreenshot = async () => {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1920, height: 1080 } });
+    const primarySource = sources.find(source => source.display_id === screen.getPrimaryDisplay().id.toString());
+    const img = (primarySource || sources[0]).thumbnail.toPNG();
+    console.log('Full screenshot taken.');
+    sendToOcrApi(img, img);
+  } catch (e) {
+    console.error('Failed to take full screenshot', e);
   }
 };
 
 const selectRegionScreenshot = () => {
-  if (process.platform === 'linux') {
-    const { exec } = require('child_process');
-    exec('which scrot', (error) => {
-      if (error) {
-        dialog.showErrorBox('Dependency Missing', 'scrot is not installed. Please install it with "sudo apt-get install scrot" or your distribution\'s package manager.');
-        return;
-      }
-      const displays = screen.getAllDisplays();
-      displays.forEach(display => {
-        const { x, y, width, height } = display.bounds;
-        const selectionWindow = new BrowserWindow({
-          x,
-          y,
-          width,
-          height,
-          frame: false,
-          transparent: true,
-          alwaysOnTop: true,
-          webPreferences: {
-            nodeIntegration: true,
-            contextIsolation: false,
-          },
-        });
-        selectionWindow.loadFile('src/selection.html');
-        selectionWindow.focus(); // Explicitly focus the window
-        selectionWindows.push(selectionWindow);
-
-        selectionWindow.on('closed', () => {
-          selectionWindows = selectionWindows.filter(win => win !== selectionWindow);
-        });
-      });
+  const displays = screen.getAllDisplays();
+  selectionWindows = displays.map(display => {
+    const { x, y, width, height } = display.bounds;
+    const selectionWindow = new BrowserWindow({
+      x,
+      y,
+      width,
+      height,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+      },
     });
-  } else {
-    const displays = screen.getAllDisplays();
-    displays.forEach(display => {
-      const { x, y, width, height } = display.bounds;
-      const selectionWindow = new BrowserWindow({
-        x,
-        y,
-        width,
-        height,
-        frame: false,
-        transparent: true,
-        alwaysOnTop: true,
-        webPreferences: {
-          nodeIntegration: true,
-          contextIsolation: false,
-        },
-      });
-      selectionWindow.loadFile('src/selection.html');
-      selectionWindows.push(selectionWindow);
-    });
-  }
+    selectionWindow.loadFile('src/selection.html');
+    return selectionWindow;
+  });
 };
 
-
-ipcMain.on('screenshot:region', (event, rect) => {
-  screenshot({ format: 'png' }).then((img) => {
-    Jimp.read(img)
+ipcMain.on('screenshot:region', async (event, rect) => {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1920, height: 1080 } });
+    const primarySource = sources.find(source => source.display_id === screen.getPrimaryDisplay().id.toString());
+    const img = (primarySource || sources[0]).thumbnail;
+    
+    const buffer = await Jimp.read(img.toPNG())
       .then(image => {
         return image.crop(rect.x, rect.y, rect.width, rect.height)
              .getBufferAsync(Jimp.MIME_PNG);
-      })
-      .then(buffer => {
-        console.log('Region screenshot taken and cropped.');
-        sendToOcrApi(buffer, buffer, false);
-      })
-      .catch(err => {
-        console.error('Failed to process region screenshot with Jimp', err);
       });
-  }).catch((err) => {
-    console.error('Failed to take region screenshot', err);
-  });
+
+    console.log('Region screenshot taken and cropped.');
+    sendToOcrApi(buffer, buffer, false);
+  } catch (e) {
+    console.error('Failed to take or process region screenshot', e);
+  }
 });
 
 ipcMain.on('wordbook:add', (event, word) => {
