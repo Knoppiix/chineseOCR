@@ -91,11 +91,10 @@ app = FastAPI(
 ocr = PaddleOCR(
     ocr_version='PP-OCRv4',
     use_angle_cls=True,
-    use_gpu=False,
+#    use_gpu=False,
     lang='ch',
     use_doc_orientation_classify=False,
-    use_textline_orientation=False,
-    return_word_box=True
+#    return_word_box=True
 )
 
 # Maximum allowed file size (100MB)

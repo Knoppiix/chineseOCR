@@ -263,51 +263,20 @@ const createWordBookWindow = () => {
 
 const takeFullScreenshot = async (electronDisplayId = null) => {
   try {
-    const displays = await screenshot.listDisplays();
-    let targetDisplayId = null;
-
+    const options = { format: 'png', linuxLibrary: 'imagemagick' };
     if (electronDisplayId) {
-      const electronDisplays = screen.getAllDisplays();
-      const matchingElectronDisplay = electronDisplays.find(d => d.id === electronDisplayId);
-      if (matchingElectronDisplay) {
-        const screenshotDisplay = displays.find(sd => 
-          sd.left === matchingElectronDisplay.bounds.x &&
-          sd.top === matchingElectronDisplay.bounds.y &&
-          sd.width === matchingElectronDisplay.bounds.width &&
-          sd.height === matchingElectronDisplay.bounds.height
-        );
-        if (screenshotDisplay) {
-          targetDisplayId = screenshotDisplay.id;
-        }
-      }
-    } else {
-      // Default to primary display if no specific ID is provided
-      const primaryElectronDisplay = screen.getPrimaryDisplay();
-      const screenshotDisplay = displays.find(sd => 
-        sd.left === primaryElectronDisplay.bounds.x &&
-        sd.top === primaryElectronDisplay.bounds.y &&
-        sd.width === primaryElectronDisplay.bounds.width &&
-        sd.height === primaryElectronDisplay.bounds.height
-      );
-      if (screenshotDisplay) {
-        targetDisplayId = screenshotDisplay.id;
+      const displays = await screenshot.listDisplays();
+      const edisplays = screen.getAllDisplays();
+      const edisplay = edisplays.find(d => d.id === electronDisplayId);
+      const sdisplay = displays.find(d => d.offsetX === edisplay.bounds.x && d.offsetY === edisplay.bounds.y);
+      if (sdisplay) {
+        options.screen = sdisplay.id;
       }
     }
 
-    if (!targetDisplayId) {
-      console.error('Could not determine target display ID for full screenshot.');
-      // Fallback to default screenshot behavior if ID cannot be determined
-      await screenshot({ format: 'png' }).then((img) => {
-        console.log('Full screenshot taken (fallback).');
-        sendToOcrApi(img, img);
-      });
-      return;
-    }
-
-    await screenshot({ format: 'png', screen: targetDisplayId }).then((img) => {
-      console.log('Full screenshot taken.');
-      sendToOcrApi(img, img);
-    });
+    const img = await screenshot(options);
+    console.log('Full screenshot taken.');
+    sendToOcrApi(img, img);
   } catch (err) {
     console.error('Failed to take full screenshot', err);
   }
@@ -318,11 +287,12 @@ const selectRegionScreenshot = async () => {
   const screenshotDisplays = await screenshot.listDisplays();
 
   displays.forEach(electronDisplay => {
-    const { x, y, width, height, id: electronDisplayId } = electronDisplay.bounds;
+    const { x, y, width, height } = electronDisplay.bounds;
+    const electronDisplayId = electronDisplay.id;
 
     // Find the corresponding screenshot-desktop display ID
     const matchingScreenshotDisplay = screenshotDisplays.find(sd => 
-      sd.left === x && sd.top === y && sd.width === width && sd.height === height
+      sd.offsetX === x && sd.offsetY === y && sd.width === width && sd.height === height
     );
 
     if (!matchingScreenshotDisplay) {
@@ -366,11 +336,28 @@ ipcMain.on('screenshot:region', async (event, { rect, displayId }) => {
     return;
   }
 
-  // The displayId received here is already the screenshot-desktop format
   try {
-    const img = await screenshot({ screen: displayId, format: 'png' });
+    const options = { screen: displayId, format: 'png', linuxLibrary: 'imagemagick' };
+    const img = await screenshot(options);
+    
+    // Find the display to get its bounds
+    const displays = await screenshot.listDisplays();
+    const display = displays.find(d => d.id === displayId);
+    if (!display) {
+        console.error('Could not find display with ID:', displayId);
+        return;
+    }
+
+    // Adjust rect coordinates to be relative to the captured screen
+    const adjustedRect = {
+        x: rect.x - display.left,
+        y: rect.y - display.top,
+        width: rect.width,
+        height: rect.height
+    };
+
     const image = await Jimp.read(img);
-    const buffer = await image.crop(rect.x, rect.y, rect.width, rect.height).getBufferAsync(Jimp.MIME_PNG);
+    const buffer = await image.crop(adjustedRect.x, adjustedRect.y, adjustedRect.width, adjustedRect.height).getBufferAsync(Jimp.MIME_PNG);
     console.log('Region screenshot taken and cropped.');
     sendToOcrApi(buffer, buffer, false);
   } catch (err) {
