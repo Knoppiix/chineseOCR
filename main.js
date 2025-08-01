@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, Menu, dialog, Tray } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Menu, dialog, Tray, desktopCapturer } = require('electron');
 const screenshot = require('screenshot-desktop');
 const path = require('path');
 const Jimp = require('jimp');
@@ -261,6 +261,7 @@ const createWordBookWindow = () => {
   });
 };
 
+
 const takeFullScreenshot = async (electronDisplayId = null) => {
   try {
     const options = { format: 'png', linuxLibrary: 'imagemagick' };
@@ -312,6 +313,7 @@ const selectRegionScreenshot = async () => {
         nodeIntegration: true,
         contextIsolation: false,
       },
+
       show: false // Keep the window hidden until it's ready
     });
 
@@ -362,6 +364,30 @@ ipcMain.on('screenshot:region', async (event, { rect, displayId }) => {
     sendToOcrApi(buffer, buffer, false);
   } catch (err) {
     console.error('Failed to take region screenshot', err);
+=======
+    });
+    selectionWindow.loadFile('src/selection.html');
+    return selectionWindow;
+  });
+};
+
+ipcMain.on('screenshot:region', async (event, rect) => {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1920, height: 1080 } });
+    const primarySource = sources.find(source => source.display_id === screen.getPrimaryDisplay().id.toString());
+    const img = (primarySource || sources[0]).thumbnail;
+    
+    const buffer = await Jimp.read(img.toPNG())
+      .then(image => {
+        return image.crop(rect.x, rect.y, rect.width, rect.height)
+             .getBufferAsync(Jimp.MIME_PNG);
+      });
+
+    console.log('Region screenshot taken and cropped.');
+    sendToOcrApi(buffer, buffer, false);
+  } catch (e) {
+    console.error('Failed to take or process region screenshot', e);
+
   }
 });
 

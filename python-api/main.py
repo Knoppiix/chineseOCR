@@ -135,7 +135,7 @@ async def perform_ocr(request: Request, file: UploadFile = File(...)) -> OCRResp
         raise HTTPException(status_code=400, detail="Invalid file type")
     
     # Create a temporary file
-    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
         temp_file.write(contents)
         temp_file_path = temp_file.name
 
@@ -146,37 +146,61 @@ async def perform_ocr(request: Request, file: UploadFile = File(...)) -> OCRResp
         # Process results
         processed_result = []
         if result and result[0]:
-            for item in result[0]:
-                text = item[1][0]
-                box = item[0]
-                confidence = item[1][1]
-                
-                text_len = len(text)
-                if text_len > 0:
-                    # Handle potentially rotated boxes by interpolating along top and bottom edges
-                    p0, p1, p2, p3 = box[0], box[1], box[2], box[3]
+            ocr_data = result[0]
+            # On Linux, the result can be a single dictionary. On Windows, it's a list of items.
+            # This code handles both formats to ensure cross-platform compatibility.
+            if isinstance(ocr_data, dict) and 'rec_texts' in ocr_data:
+                # Handle the dictionary format (common on Linux)
+                num_items = len(ocr_data['rec_texts'])
+                for i in range(num_items):
+                    text = ocr_data['rec_texts'][i]
+                    confidence = ocr_data['rec_scores'][i]
+                    box = ocr_data['rec_polys'][i]
 
-                    # Calculate the vector for one character step along the top and bottom edges
-                    v_top_x = (p1[0] - p0[0]) / text_len
-                    v_top_y = (p1[1] - p0[1]) / text_len
-                    v_bottom_x = (p2[0] - p3[0]) / text_len
-                    v_bottom_y = (p2[1] - p3[1]) / text_len
+                    text_len = len(text)
+                    if text_len > 0:
+                        p0, p1, p2, p3 = box[0], box[1], box[2], box[3]
+                        v_top_x = (p1[0] - p0[0]) / text_len
+                        v_top_y = (p1[1] - p0[1]) / text_len
+                        v_bottom_x = (p2[0] - p3[0]) / text_len
+                        v_bottom_y = (p2[1] - p3[1]) / text_len
 
-                    for i, char_text in enumerate(text):
-                        # Calculate the 4 corners for the character's bounding box
-                        char_p0 = [p0[0] + i * v_top_x, p0[1] + i * v_top_y]
-                        char_p1 = [p0[0] + (i + 1) * v_top_x, p0[1] + (i + 1) * v_top_y]
-                        
-                        char_p3 = [p3[0] + i * v_bottom_x, p3[1] + i * v_bottom_y]
-                        char_p2 = [p3[0] + (i + 1) * v_bottom_x, p3[1] + (i + 1) * v_bottom_y]
-                        
-                        char_box = [char_p0, char_p1, char_p2, char_p3]
-                        
-                        processed_result.append(OCRResult(
-                            text=char_text,
-                            confidence=confidence,
-                            bounding_box=[[int(coord) for coord in point] for point in char_box]
-                        ))
+                        for j, char_text in enumerate(text):
+                            char_p0 = [p0[0] + j * v_top_x, p0[1] + j * v_top_y]
+                            char_p1 = [p0[0] + (j + 1) * v_top_x, p0[1] + (j + 1) * v_top_y]
+                            char_p3 = [p3[0] + j * v_bottom_x, p3[1] + j * v_bottom_y]
+                            char_p2 = [p3[0] + (j + 1) * v_bottom_x, p3[1] + (j + 1) * v_bottom_y]
+                            char_box = [char_p0, char_p1, char_p2, char_p3]
+                            processed_result.append(OCRResult(
+                                text=char_text,
+                                confidence=confidence,
+                                bounding_box=[[int(coord) for coord in point] for point in char_box]
+                            ))
+            elif isinstance(ocr_data, list):
+                # Handle the list format (common on Windows)
+                for item in ocr_data:
+                    text = item[1][0]
+                    box = item[0]
+                    confidence = item[1][1]
+                    
+                    text_len = len(text)
+                    if text_len > 0:
+                        p0, p1, p2, p3 = box[0], box[1], box[2], box[3]
+                        v_top_x = (p1[0] - p0[0]) / text_len
+                        v_top_y = (p1[1] - p0[1]) / text_len
+                        v_bottom_x = (p2[0] - p3[0]) / text_len
+                        v_bottom_y = (p2[1] - p3[1]) / text_len
+                        for i, char_text in enumerate(text):
+                            char_p0 = [p0[0] + i * v_top_x, p0[1] + i * v_top_y]
+                            char_p1 = [p0[0] + (i + 1) * v_top_x, p0[1] + (i + 1) * v_top_y]
+                            char_p3 = [p3[0] + i * v_bottom_x, p3[1] + i * v_bottom_y]
+                            char_p2 = [p3[0] + (i + 1) * v_bottom_x, p3[1] + (i + 1) * v_bottom_y]
+                            char_box = [char_p0, char_p1, char_p2, char_p3]
+                            processed_result.append(OCRResult(
+                                text=char_text,
+                                confidence=confidence,
+                                bounding_box=[[int(coord) for coord in point] for point in char_box]
+                            ))
 
         final_results = segment_text(processed_result)
         return OCRResponse(result=final_results)
