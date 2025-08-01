@@ -261,105 +261,121 @@ const createWordBookWindow = () => {
   });
 };
 
-const takeFullScreenshot = () => {
-  if (process.platform === 'linux') {
-    const { exec } = require('child_process');
-    exec('which scrot', (error) => {
-      if (error) {
-        dialog.showErrorBox('Dependency Missing', 'scrot is not installed. Please install it with \'sudo apt-get install scrot\' or your distribution\'s package manager.');
-        return;
+const takeFullScreenshot = async (electronDisplayId = null) => {
+  try {
+    const displays = await screenshot.listDisplays();
+    let targetDisplayId = null;
+
+    if (electronDisplayId) {
+      const electronDisplays = screen.getAllDisplays();
+      const matchingElectronDisplay = electronDisplays.find(d => d.id === electronDisplayId);
+      if (matchingElectronDisplay) {
+        const screenshotDisplay = displays.find(sd => 
+          sd.left === matchingElectronDisplay.bounds.x &&
+          sd.top === matchingElectronDisplay.bounds.y &&
+          sd.width === matchingElectronDisplay.bounds.width &&
+          sd.height === matchingElectronDisplay.bounds.height
+        );
+        if (screenshotDisplay) {
+          targetDisplayId = screenshotDisplay.id;
+        }
       }
-      screenshot({ format: 'png' }).then((img) => {
-        console.log('Full screenshot taken.');
+    } else {
+      // Default to primary display if no specific ID is provided
+      const primaryElectronDisplay = screen.getPrimaryDisplay();
+      const screenshotDisplay = displays.find(sd => 
+        sd.left === primaryElectronDisplay.bounds.x &&
+        sd.top === primaryElectronDisplay.bounds.y &&
+        sd.width === primaryElectronDisplay.bounds.width &&
+        sd.height === primaryElectronDisplay.bounds.height
+      );
+      if (screenshotDisplay) {
+        targetDisplayId = screenshotDisplay.id;
+      }
+    }
+
+    if (!targetDisplayId) {
+      console.error('Could not determine target display ID for full screenshot.');
+      // Fallback to default screenshot behavior if ID cannot be determined
+      await screenshot({ format: 'png' }).then((img) => {
+        console.log('Full screenshot taken (fallback).');
         sendToOcrApi(img, img);
-      }).catch((err) => {
-        console.error('Failed to take full screenshot', err);
       });
-    });
-  } else {
-    screenshot({ format: 'png' }).then((img) => {
+      return;
+    }
+
+    await screenshot({ format: 'png', screen: targetDisplayId }).then((img) => {
       console.log('Full screenshot taken.');
       sendToOcrApi(img, img);
-    }).catch((err) => {
-      console.error('Failed to take full screenshot', err);
     });
+  } catch (err) {
+    console.error('Failed to take full screenshot', err);
   }
 };
 
-const selectRegionScreenshot = () => {
-  if (process.platform === 'linux') {
-    const { exec } = require('child_process');
-    exec('which scrot', (error) => {
-      if (error) {
-        dialog.showErrorBox('Dependency Missing', 'scrot is not installed. Please install it with "sudo apt-get install scrot" or your distribution\'s package manager.');
-        return;
-      }
-      const displays = screen.getAllDisplays();
-      displays.forEach(display => {
-        const { x, y, width, height } = display.bounds;
-        const selectionWindow = new BrowserWindow({
-          x,
-          y,
-          width,
-          height,
-          frame: false,
-          transparent: true,
-          alwaysOnTop: true,
-          webPreferences: {
-            nodeIntegration: true,
-            contextIsolation: false,
-          },
-        });
-        selectionWindow.loadFile('src/selection.html');
-        selectionWindow.focus(); // Explicitly focus the window
-        selectionWindows.push(selectionWindow);
+const selectRegionScreenshot = async () => {
+  const displays = screen.getAllDisplays();
+  const screenshotDisplays = await screenshot.listDisplays();
 
-        selectionWindow.on('closed', () => {
-          selectionWindows = selectionWindows.filter(win => win !== selectionWindow);
-        });
-      });
+  displays.forEach(electronDisplay => {
+    const { x, y, width, height, id: electronDisplayId } = electronDisplay.bounds;
+
+    // Find the corresponding screenshot-desktop display ID
+    const matchingScreenshotDisplay = screenshotDisplays.find(sd => 
+      sd.left === x && sd.top === y && sd.width === width && sd.height === height
+    );
+
+    if (!matchingScreenshotDisplay) {
+      console.warn(`No matching screenshot-desktop display found for Electron display ID: ${electronDisplayId}`);
+      return; // Skip this display if no match is found
+    }
+
+    const selectionWindow = new BrowserWindow({
+      x,
+      y,
+      width,
+      height,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+      },
+      show: false // Keep the window hidden until it's ready
     });
-  } else {
-    const displays = screen.getAllDisplays();
-    displays.forEach(display => {
-      const { x, y, width, height } = display.bounds;
-      const selectionWindow = new BrowserWindow({
-        x,
-        y,
-        width,
-        height,
-        frame: false,
-        transparent: true,
-        alwaysOnTop: true,
-        webPreferences: {
-          nodeIntegration: true,
-          contextIsolation: false,
-        },
-      });
-      selectionWindow.loadFile('src/selection.html');
-      selectionWindows.push(selectionWindow);
+
+    selectionWindow.once('ready-to-show', () => {
+      selectionWindow.webContents.send('display-id', matchingScreenshotDisplay.id); // Send screenshot-desktop ID
+      selectionWindow.show();
     });
-  }
-};
 
+    selectionWindow.loadFile('src/selection.html');
+    selectionWindows.push(selectionWindow);
 
-ipcMain.on('screenshot:region', (event, rect) => {
-  screenshot({ format: 'png' }).then((img) => {
-    Jimp.read(img)
-      .then(image => {
-        return image.crop(rect.x, rect.y, rect.width, rect.height)
-             .getBufferAsync(Jimp.MIME_PNG);
-      })
-      .then(buffer => {
-        console.log('Region screenshot taken and cropped.');
-        sendToOcrApi(buffer, buffer, false);
-      })
-      .catch(err => {
-        console.error('Failed to process region screenshot with Jimp', err);
-      });
-  }).catch((err) => {
-    console.error('Failed to take region screenshot', err);
+    selectionWindow.on('closed', () => {
+      selectionWindows = selectionWindows.filter(win => win !== selectionWindow);
+    });
   });
+};
+
+
+ipcMain.on('screenshot:region', async (event, { rect, displayId }) => {
+  if (!displayId) {
+    console.error('Received screenshot:region event with undefined displayId.');
+    return;
+  }
+
+  // The displayId received here is already the screenshot-desktop format
+  try {
+    const img = await screenshot({ screen: displayId, format: 'png' });
+    const image = await Jimp.read(img);
+    const buffer = await image.crop(rect.x, rect.y, rect.width, rect.height).getBufferAsync(Jimp.MIME_PNG);
+    console.log('Region screenshot taken and cropped.');
+    sendToOcrApi(buffer, buffer, false);
+  } catch (err) {
+    console.error('Failed to take region screenshot', err);
+  }
 });
 
 ipcMain.on('wordbook:add', (event, word) => {
@@ -426,7 +442,7 @@ app.whenReady().then(() => {
   if (fs.existsSync(iconPath)) {
       tray = new Tray(iconPath);
       const contextMenu = Menu.buildFromTemplate([
-        { label: 'Take Full Screenshot', click: takeFullScreenshot },
+        { label: 'Take Full Screenshot', click: () => takeFullScreenshot(screen.getPrimaryDisplay().id) },
         { label: 'Select Region Screenshot', click: selectRegionScreenshot },
         { label: 'Open Word Book', click: createWordBookWindow },
         { type: 'separator' },

@@ -1,6 +1,10 @@
 const { ipcRenderer } = require('electron');
 
-let startX, startY, selectionBox;
+let startX, startY, selectionBox, displayId;
+
+ipcRenderer.on('display-id', (event, id) => {
+  displayId = id;
+});
 
 // Add keydown listener directly on load for immediate escape functionality
 document.addEventListener('keydown', (e) => {
@@ -41,6 +45,19 @@ function onMouseUp(e) {
   document.removeEventListener('mousemove', onMouseMove);
   document.removeEventListener('mouseup', onMouseUp);
 
+  // Explicitly remove the selectionBox from the DOM
+  if (selectionBox && selectionBox.parentNode) {
+    selectionBox.parentNode.removeChild(selectionBox);
+  }
+
+  // Ensure displayId has been received before sending
+  if (!displayId) {
+    console.error('Error: displayId not received from main process before selection was made.');
+    ipcRenderer.send('selection:done'); // Still tell main to close other windows
+    window.close();
+    return;
+  }
+
   const rect = {
     x: parseInt(selectionBox.style.left),
     y: parseInt(selectionBox.style.top),
@@ -48,12 +65,7 @@ function onMouseUp(e) {
     height: parseInt(selectionBox.style.height)
   };
 
-  // Explicitly remove the selectionBox from the DOM
-  if (selectionBox && selectionBox.parentNode) {
-    selectionBox.parentNode.removeChild(selectionBox);
-  }
-
-  ipcRenderer.send('screenshot:region', rect);
+  ipcRenderer.send('screenshot:region', { rect, displayId });
   ipcRenderer.send('selection:done');
   window.close(); // Close the current selection window
 }
