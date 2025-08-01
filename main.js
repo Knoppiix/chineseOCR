@@ -261,22 +261,46 @@ const createWordBookWindow = () => {
   });
 };
 
-const takeFullScreenshot = async () => {
+
+const takeFullScreenshot = async (electronDisplayId = null) => {
   try {
-    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1920, height: 1080 } });
-    const primarySource = sources.find(source => source.display_id === screen.getPrimaryDisplay().id.toString());
-    const img = (primarySource || sources[0]).thumbnail.toPNG();
+    const options = { format: 'png', linuxLibrary: 'imagemagick' };
+    if (electronDisplayId) {
+      const displays = await screenshot.listDisplays();
+      const edisplays = screen.getAllDisplays();
+      const edisplay = edisplays.find(d => d.id === electronDisplayId);
+      const sdisplay = displays.find(d => d.offsetX === edisplay.bounds.x && d.offsetY === edisplay.bounds.y);
+      if (sdisplay) {
+        options.screen = sdisplay.id;
+      }
+    }
+
+    const img = await screenshot(options);
     console.log('Full screenshot taken.');
     sendToOcrApi(img, img);
-  } catch (e) {
-    console.error('Failed to take full screenshot', e);
+  } catch (err) {
+    console.error('Failed to take full screenshot', err);
   }
 };
 
-const selectRegionScreenshot = () => {
+const selectRegionScreenshot = async () => {
   const displays = screen.getAllDisplays();
-  selectionWindows = displays.map(display => {
-    const { x, y, width, height } = display.bounds;
+  const screenshotDisplays = await screenshot.listDisplays();
+
+  displays.forEach(electronDisplay => {
+    const { x, y, width, height } = electronDisplay.bounds;
+    const electronDisplayId = electronDisplay.id;
+
+    // Find the corresponding screenshot-desktop display ID
+    const matchingScreenshotDisplay = screenshotDisplays.find(sd => 
+      sd.offsetX === x && sd.offsetY === y && sd.width === width && sd.height === height
+    );
+
+    if (!matchingScreenshotDisplay) {
+      console.warn(`No matching screenshot-desktop display found for Electron display ID: ${electronDisplayId}`);
+      return; // Skip this display if no match is found
+    }
+
     const selectionWindow = new BrowserWindow({
       x,
       y,
@@ -289,6 +313,58 @@ const selectRegionScreenshot = () => {
         nodeIntegration: true,
         contextIsolation: false,
       },
+
+      show: false // Keep the window hidden until it's ready
+    });
+
+    selectionWindow.once('ready-to-show', () => {
+      selectionWindow.webContents.send('display-id', matchingScreenshotDisplay.id); // Send screenshot-desktop ID
+      selectionWindow.show();
+    });
+
+    selectionWindow.loadFile('src/selection.html');
+    selectionWindows.push(selectionWindow);
+
+    selectionWindow.on('closed', () => {
+      selectionWindows = selectionWindows.filter(win => win !== selectionWindow);
+    });
+  });
+};
+
+
+ipcMain.on('screenshot:region', async (event, { rect, displayId }) => {
+  if (!displayId) {
+    console.error('Received screenshot:region event with undefined displayId.');
+    return;
+  }
+
+  try {
+    const options = { screen: displayId, format: 'png', linuxLibrary: 'imagemagick' };
+    const img = await screenshot(options);
+    
+    // Find the display to get its bounds
+    const displays = await screenshot.listDisplays();
+    const display = displays.find(d => d.id === displayId);
+    if (!display) {
+        console.error('Could not find display with ID:', displayId);
+        return;
+    }
+
+    // Adjust rect coordinates to be relative to the captured screen
+    const adjustedRect = {
+        x: rect.x - display.left,
+        y: rect.y - display.top,
+        width: rect.width,
+        height: rect.height
+    };
+
+    const image = await Jimp.read(img);
+    const buffer = await image.crop(adjustedRect.x, adjustedRect.y, adjustedRect.width, adjustedRect.height).getBufferAsync(Jimp.MIME_PNG);
+    console.log('Region screenshot taken and cropped.');
+    sendToOcrApi(buffer, buffer, false);
+  } catch (err) {
+    console.error('Failed to take region screenshot', err);
+=======
     });
     selectionWindow.loadFile('src/selection.html');
     return selectionWindow;
@@ -311,6 +387,7 @@ ipcMain.on('screenshot:region', async (event, rect) => {
     sendToOcrApi(buffer, buffer, false);
   } catch (e) {
     console.error('Failed to take or process region screenshot', e);
+
   }
 });
 
@@ -378,7 +455,7 @@ app.whenReady().then(() => {
   if (fs.existsSync(iconPath)) {
       tray = new Tray(iconPath);
       const contextMenu = Menu.buildFromTemplate([
-        { label: 'Take Full Screenshot', click: takeFullScreenshot },
+        { label: 'Take Full Screenshot', click: () => takeFullScreenshot(screen.getPrimaryDisplay().id) },
         { label: 'Select Region Screenshot', click: selectRegionScreenshot },
         { label: 'Open Word Book', click: createWordBookWindow },
         { type: 'separator' },
