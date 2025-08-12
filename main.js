@@ -1,12 +1,13 @@
 const { app, BrowserWindow, ipcMain, screen, Menu, dialog, Tray, desktopCapturer } = require('electron');
-const screenshot = require('screenshot-desktop');
+const os = require('os');
+const screenshot = require('screenshot-desktop-wayland');
 const path = require('path');
 const Jimp = require('jimp');
 const { spawn } = require('child_process');
 const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
-
+const jieba = require('nodejieba');
 // --- Dictionary Logic Start ---
 let dictionary = null;
 
@@ -69,32 +70,24 @@ function translate(word) {
 }
 
 function findWordsInText(text) {
-    const dict = getDictionary();
-    const words = [];
-    let i = 0;
-    while (i < text.length) {
-        let foundWord = null;
-        for (let j = text.length; j > i; j--) {
-            const sub = text.substring(i, j);
+	const dict = getDictionary();
+	const words = [];
+	const textSegmentation = jieba.cut(text);
+	for (let j = textSegmentation.length; j > 0; j--) {
+            const sub = textSegmentation[j-1];
             if (dict.has(sub)) {
-                foundWord = {
+                words.push({
                     text: sub,
                     translation: dict.get(sub),
-                    startIndex: i,
+                    startIndex: j - 1 - sub.length,
                     endIndex: j - 1
-                };
-                break;
-            }
-        }
-        if (foundWord) {
-            words.push(foundWord);
-            i = foundWord.endIndex + 1;
-        } else {
-            i++;
+                });
         }
     }
-    return words;
+    return words
 }
+
+
 // --- Dictionary Logic End ---
 
 
@@ -339,8 +332,8 @@ ipcMain.on('screenshot:region', async (event, { rect, displayId }) => {
   }
 
   try {
-    const options = { screen: displayId, format: 'png', linuxLibrary: 'imagemagick' };
-    const img = await screenshot(options);
+    const img = await screenshot({ screen: displayId, format: 'png' });
+    const image = await Jimp.read(img);
     
     // Find the display to get its bounds
     const displays = await screenshot.listDisplays();
@@ -352,42 +345,17 @@ ipcMain.on('screenshot:region', async (event, { rect, displayId }) => {
 
     // Adjust rect coordinates to be relative to the captured screen
     const adjustedRect = {
-        x: rect.x - display.left,
-        y: rect.y - display.top,
+        x: rect.x - display.offsetX,
+        y: rect.y - display.offsetY,
         width: rect.width,
         height: rect.height
     };
 
-    const image = await Jimp.read(img);
     const buffer = await image.crop(adjustedRect.x, adjustedRect.y, adjustedRect.width, adjustedRect.height).getBufferAsync(Jimp.MIME_PNG);
     console.log('Region screenshot taken and cropped.');
     sendToOcrApi(buffer, buffer, false);
   } catch (err) {
     console.error('Failed to take region screenshot', err);
-=======
-    });
-    selectionWindow.loadFile('src/selection.html');
-    return selectionWindow;
-  });
-};
-
-ipcMain.on('screenshot:region', async (event, rect) => {
-  try {
-    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1920, height: 1080 } });
-    const primarySource = sources.find(source => source.display_id === screen.getPrimaryDisplay().id.toString());
-    const img = (primarySource || sources[0]).thumbnail;
-    
-    const buffer = await Jimp.read(img.toPNG())
-      .then(image => {
-        return image.crop(rect.x, rect.y, rect.width, rect.height)
-             .getBufferAsync(Jimp.MIME_PNG);
-      });
-
-    console.log('Region screenshot taken and cropped.');
-    sendToOcrApi(buffer, buffer, false);
-  } catch (e) {
-    console.error('Failed to take or process region screenshot', e);
-
   }
 });
 
