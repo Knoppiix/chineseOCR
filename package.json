@@ -16,6 +16,8 @@
     "axios": "^1.10.0",
     "form-data": "^4.0.3",
     "jimp": "^0.16.1",
-    "screenshot-desktop": "^1.15.1"
+    "ps-tree": "^1.2.0",
+    "screenshot-desktop": "^1.15.1",
+    "tree-kill": "^1.2.2"
   }
 }

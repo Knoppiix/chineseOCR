@@ -1,0 +1,7 @@
+1. Clean the code & re-organize it
+2. Improve UI
+	- Screenshot window - resize window to the image size?
+3. New functionnalities ideas
+	- "Record" option - Record the screen and search for chinese chars. When record stops, show a summary of all Chinese chars (from the most seen to rarest ones)
+	- Upload image functionnality
+	- Discord bot?

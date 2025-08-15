@@ -2,10 +2,11 @@ const { app, BrowserWindow, ipcMain, screen, Menu, dialog, Tray } = require('ele
 const screenshot = require('screenshot-desktop');
 const path = require('path');
 const Jimp = require('jimp');
-const { spawn } = require('child_process');
+const { spawn, exec } = require('child_process');
 const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
+const psTree = require('ps-tree');
 
 // --- Dictionary Logic Start ---
 let dictionary = null;
@@ -128,38 +129,82 @@ const saveWordBook = () => {
 };
 
 // Function to start the Python API server
-const startPythonApi = () => {
+const startPythonApi = async () => {
   console.log('Starting Python API server...');
-  pythonProcess = spawn('python', ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '5000'], {
-    cwd: path.join(__dirname, 'python-api'),
-    shell: true,
-    detached: true
-  });
+  try {
+    pythonProcess = spawn('python', ['main.py'], {
+      cwd: path.join(__dirname, 'python-api'),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: true  // This is important for Windows compatibility
+    });
 
-  pythonProcess.stdout.on('data', (data) => {
-    console.log(`Python API stdout: ${data}`);
-  });
+    // Handle process errors
+    pythonProcess.on('error', (err) => {
+      console.error('Failed to start Python process:', err);
+      pythonProcess = null;
+      throw err;
+    });
 
-  pythonProcess.stderr.on('data', (data) => {
-    console.error(`Python API stderr: ${data}`);
-  });
+    // Buffer to collect stderr
+    let stderrBuffer = '';
+    
+    pythonProcess.stdout.on('data', (data) => {
+      const output = data.toString();
+      console.log(`Python API stdout: ${output}`);
+    });
 
-  pythonProcess.on('close', (code) => {
-    console.log(`Python API process exited with code ${code}`);
-    pythonProcess = null;
-  });
+    pythonProcess.stderr.on('data', (data) => {
+      const errorOutput = data.toString();
+      console.error(`Python API stderr: ${errorOutput}`);
+      stderrBuffer += errorOutput;
+    });
+
+    // Wait for the process to either exit or start successfully
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        if (stderrBuffer.includes('Application startup complete')) {
+          resolve();
+        } else {
+          reject(new Error('Python server failed to start: ' + stderrBuffer));
+        }
+      }, 10000); // 10 second timeout
+
+      pythonProcess.once('exit', (code) => {
+        clearTimeout(timeout);
+        if (code !== 0) {
+          reject(new Error(`Python process exited with code ${code}: ${stderrBuffer}`));
+        } else {
+          resolve();
+        }
+      });
+    });
+
+    console.log('Python API server started successfully');
+    return true;
+  } catch (error) {
+    console.error('Error starting Python API server:', error);
+    if (pythonProcess) {
+      try {
+        await stopPythonApi();
+      } catch (e) {
+        console.error('Error while cleaning up after failed start:', e);
+      }
+    }
+    throw error;
+  }
 };
 
 // Function to stop the Python API server
-const stopPythonApi = () => {
-  if (pythonProcess) {
-    console.log('Stopping Python API server...');
-    try {
-      // Kill the process group to ensure all child processes are terminated
-      process.kill(-pythonProcess.pid, 'SIGKILL');
-    } catch (e) {
-      console.error('Failed to kill Python process group:', e);
-    }
+const stopPythonApi = async () => {
+  if (!pythonProcess) return;
+
+  console.log('Stopping Python API server...');
+
+  try {
+    process.kill(pythonProcess.pid, 'SIGINT');
+  } catch (e) {
+    console.error('Failed to kill Python process:', e);
+  } finally {
     pythonProcess = null;
   }
 };
@@ -174,7 +219,7 @@ const sendToOcrApi = async (imageBuffer, originalImageBuffer, isFullScreen = fal
     });
 
     console.log('Sending screenshot to OCR API...');
-    const response = await axios.put('http://127.0.0.1:5000/ocr', form, {
+    const response = await axios.put('http://127.0.0.1:62965/ocr', form, {
       headers: {
         ...form.getHeaders()
       },
@@ -434,7 +479,9 @@ ipcMain.handle('find-words', (event, text) => {
 app.whenReady().then(() => {
   loadWordBook();
   getDictionary(); // Load the dictionary on startup
-  startPythonApi();
+  startPythonApi()
+  .then(() => console.log('Server started'))
+  .catch(err => console.error('Failed to start server:', err));
   createWindow();
 
   // NOTE: You'll need to create an icon file named 'icon.png' in the root of your project.

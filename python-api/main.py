@@ -1,15 +1,28 @@
+import os
+import sys
+import atexit
+import signal
+import socket
+import random
+import subprocess
+import sys
 from fastapi import FastAPI, UploadFile, HTTPException, File, Request
 from fastapi.responses import JSONResponse
 from paddleocr import PaddleOCR
-import os
 import mimetypes
 import tempfile
 from typing import List, Dict, Union, Any
 from pydantic import BaseModel
 from pathlib import Path
 
-# Global dictionary for Chinese words
+# Global variables
 chinese_dictionary = set()
+PORT = 62965
+
+async def lifespan(app: FastAPI):
+    yield
+    print("Shutting down server (lifespan event)...")
+    kill_process_on_port(PORT)
 
 def load_dictionary():
     dict_path = Path(__file__).parent.parent / "cedict_1_0_ts_utf-8_mdbg.txt"
@@ -82,7 +95,8 @@ from pathlib import Path
 
 app = FastAPI(
     title="Chinese OCR API",
-    description="API for performing OCR on Chinese text in images using PaddleOCR"
+    description="API for performing OCR on Chinese text in images using PaddleOCR",
+    lifespan=lifespan
 )
 
 # Initialize PaddleOCR
@@ -186,6 +200,71 @@ async def perform_ocr(request: Request, file: UploadFile = File(...)) -> OCRResp
         # Remove the temporary file
         os.unlink(temp_file_path)
 
-if __name__ == '__main__':
+
+def kill_process_on_port(port):
+    """Kill any process running on the specified port"""
+    try:
+        if os.name == 'nt':  # Windows
+            result = subprocess.run(
+                ['netstat', '-ano', '-p', 'tcp'],
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            for line in result.stdout.splitlines():
+                if f':{port} ' in line:
+                    parts = line.split()
+                    pid = parts[-1]
+                    subprocess.run(
+                        ['taskkill', '/F', '/PID', pid],
+                        capture_output=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    break
+        else:  # Unix-like systems
+            subprocess.run(['fuser', '-k', f'{port}/tcp'])
+    except Exception as e:
+        print(f"Error killing process on port {port}: {e}", file=sys.stderr)
+
+
+def run_server():
+    """Run the uvicorn server on the specified port"""
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=5000)
+    config = uvicorn.Config(
+        app=app,
+        host="127.0.0.1",
+        port=PORT,
+        log_level="info"
+    )
+    print(f"Starting server on port {PORT}")
+    server = uvicorn.Server(config)
+    server.run()
+
+def is_port_in_use(port):
+    """Check if a port is already in use"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
+if __name__ == '__main__':
+    try:
+        # Check if port is already in use and kill the process if needed
+        if is_port_in_use(PORT):
+            print(f"Port {PORT} is already in use. Attempting to free it...")
+            kill_process_on_port(PORT)
+            
+            # Give it a moment to free up
+            import time
+            time.sleep(.4)
+            
+            # Check again if port is still in use
+            if is_port_in_use(PORT):
+                print(f"Warning: Could not free port {PORT}. The server might not start properly.")
+            else:
+                print(f"Successfully freed port {PORT}")
+        
+        run_server()
+    except KeyboardInterrupt:
+        print("\nShutting down server...")
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
