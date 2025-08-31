@@ -1,28 +1,15 @@
-import os
-import sys
-import atexit
-import signal
-import socket
-import random
-import subprocess
-import sys
 from fastapi import FastAPI, UploadFile, HTTPException, File, Request
 from fastapi.responses import JSONResponse
 from paddleocr import PaddleOCR
+import os
 import mimetypes
 import tempfile
 from typing import List, Dict, Union, Any
 from pydantic import BaseModel
 from pathlib import Path
 
-# Global variables
+# Global dictionary for Chinese words
 chinese_dictionary = set()
-PORT = 62965
-
-async def lifespan(app: FastAPI):
-    yield
-    print("Shutting down server (lifespan event)...")
-    kill_process_on_port(PORT)
 
 def load_dictionary():
     dict_path = Path(__file__).parent.parent / "cedict_1_0_ts_utf-8_mdbg.txt"
@@ -95,8 +82,7 @@ from pathlib import Path
 
 app = FastAPI(
     title="Chinese OCR API",
-    description="API for performing OCR on Chinese text in images using PaddleOCR",
-    lifespan=lifespan
+    description="API for performing OCR on Chinese text in images using PaddleOCR"
 )
 
 # Initialize PaddleOCR
@@ -104,12 +90,12 @@ app = FastAPI(
 
 ocr = PaddleOCR(
     ocr_version='PP-OCRv4',
-    use_angle_cls=True,
-    use_gpu=False,
+#    use_angle_cls=True,
+#    use_gpu=False,
     lang='ch',
-    use_doc_orientation_classify=False,
+#    use_doc_orientation_classify=False,
     use_textline_orientation=False,
-    return_word_box=True
+#    return_word_box=True
 )
 
 # Maximum allowed file size (100MB)
@@ -150,7 +136,7 @@ async def perform_ocr(request: Request, file: UploadFile = File(...)) -> OCRResp
         raise HTTPException(status_code=400, detail="Invalid file type")
     
     # Create a temporary file
-    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
         temp_file.write(contents)
         temp_file_path = temp_file.name
 
@@ -161,37 +147,61 @@ async def perform_ocr(request: Request, file: UploadFile = File(...)) -> OCRResp
         # Process results
         processed_result = []
         if result and result[0]:
-            for item in result[0]:
-                text = item[1][0]
-                box = item[0]
-                confidence = item[1][1]
-                
-                text_len = len(text)
-                if text_len > 0:
-                    # Handle potentially rotated boxes by interpolating along top and bottom edges
-                    p0, p1, p2, p3 = box[0], box[1], box[2], box[3]
+            ocr_data = result[0]
+            # On Linux, the result can be a single dictionary. On Windows, it's a list of items.
+            # This code handles both formats to ensure cross-platform compatibility.
+            if isinstance(ocr_data, dict) and 'rec_texts' in ocr_data:
+                # Handle the dictionary format (common on Linux)
+                num_items = len(ocr_data['rec_texts'])
+                for i in range(num_items):
+                    text = ocr_data['rec_texts'][i]
+                    confidence = ocr_data['rec_scores'][i]
+                    box = ocr_data['rec_polys'][i]
 
-                    # Calculate the vector for one character step along the top and bottom edges
-                    v_top_x = (p1[0] - p0[0]) / text_len
-                    v_top_y = (p1[1] - p0[1]) / text_len
-                    v_bottom_x = (p2[0] - p3[0]) / text_len
-                    v_bottom_y = (p2[1] - p3[1]) / text_len
+                    text_len = len(text)
+                    if text_len > 0:
+                        p0, p1, p2, p3 = box[0], box[1], box[2], box[3]
+                        v_top_x = (p1[0] - p0[0]) / text_len
+                        v_top_y = (p1[1] - p0[1]) / text_len
+                        v_bottom_x = (p2[0] - p3[0]) / text_len
+                        v_bottom_y = (p2[1] - p3[1]) / text_len
 
-                    for i, char_text in enumerate(text):
-                        # Calculate the 4 corners for the character's bounding box
-                        char_p0 = [p0[0] + i * v_top_x, p0[1] + i * v_top_y]
-                        char_p1 = [p0[0] + (i + 1) * v_top_x, p0[1] + (i + 1) * v_top_y]
-                        
-                        char_p3 = [p3[0] + i * v_bottom_x, p3[1] + i * v_bottom_y]
-                        char_p2 = [p3[0] + (i + 1) * v_bottom_x, p3[1] + (i + 1) * v_bottom_y]
-                        
-                        char_box = [char_p0, char_p1, char_p2, char_p3]
-                        
-                        processed_result.append(OCRResult(
-                            text=char_text,
-                            confidence=confidence,
-                            bounding_box=[[int(coord) for coord in point] for point in char_box]
-                        ))
+                        for j, char_text in enumerate(text):
+                            char_p0 = [p0[0] + j * v_top_x, p0[1] + j * v_top_y]
+                            char_p1 = [p0[0] + (j + 1) * v_top_x, p0[1] + (j + 1) * v_top_y]
+                            char_p3 = [p3[0] + j * v_bottom_x, p3[1] + j * v_bottom_y]
+                            char_p2 = [p3[0] + (j + 1) * v_bottom_x, p3[1] + (j + 1) * v_bottom_y]
+                            char_box = [char_p0, char_p1, char_p2, char_p3]
+                            processed_result.append(OCRResult(
+                                text=char_text,
+                                confidence=confidence,
+                                bounding_box=[[int(coord) for coord in point] for point in char_box]
+                            ))
+            elif isinstance(ocr_data, list):
+                # Handle the list format (common on Windows)
+                for item in ocr_data:
+                    text = item[1][0]
+                    box = item[0]
+                    confidence = item[1][1]
+                    
+                    text_len = len(text)
+                    if text_len > 0:
+                        p0, p1, p2, p3 = box[0], box[1], box[2], box[3]
+                        v_top_x = (p1[0] - p0[0]) / text_len
+                        v_top_y = (p1[1] - p0[1]) / text_len
+                        v_bottom_x = (p2[0] - p3[0]) / text_len
+                        v_bottom_y = (p2[1] - p3[1]) / text_len
+                        for i, char_text in enumerate(text):
+                            char_p0 = [p0[0] + i * v_top_x, p0[1] + i * v_top_y]
+                            char_p1 = [p0[0] + (i + 1) * v_top_x, p0[1] + (i + 1) * v_top_y]
+                            char_p3 = [p3[0] + i * v_bottom_x, p3[1] + i * v_bottom_y]
+                            char_p2 = [p3[0] + (i + 1) * v_bottom_x, p3[1] + (i + 1) * v_bottom_y]
+                            char_box = [char_p0, char_p1, char_p2, char_p3]
+                            processed_result.append(OCRResult(
+                                text=char_text,
+                                confidence=confidence,
+                                bounding_box=[[int(coord) for coord in point] for point in char_box]
+                            ))
 
         final_results = segment_text(processed_result)
         return OCRResponse(result=final_results)
@@ -200,71 +210,6 @@ async def perform_ocr(request: Request, file: UploadFile = File(...)) -> OCRResp
         # Remove the temporary file
         os.unlink(temp_file_path)
 
-
-def kill_process_on_port(port):
-    """Kill any process running on the specified port"""
-    try:
-        if os.name == 'nt':  # Windows
-            result = subprocess.run(
-                ['netstat', '-ano', '-p', 'tcp'],
-                capture_output=True,
-                text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            for line in result.stdout.splitlines():
-                if f':{port} ' in line:
-                    parts = line.split()
-                    pid = parts[-1]
-                    subprocess.run(
-                        ['taskkill', '/F', '/PID', pid],
-                        capture_output=True,
-                        creationflags=subprocess.CREATE_NO_WINDOW
-                    )
-                    break
-        else:  # Unix-like systems
-            subprocess.run(['fuser', '-k', f'{port}/tcp'])
-    except Exception as e:
-        print(f"Error killing process on port {port}: {e}", file=sys.stderr)
-
-
-def run_server():
-    """Run the uvicorn server on the specified port"""
-    import uvicorn
-    config = uvicorn.Config(
-        app=app,
-        host="127.0.0.1",
-        port=PORT,
-        log_level="info"
-    )
-    print(f"Starting server on port {PORT}")
-    server = uvicorn.Server(config)
-    server.run()
-
-def is_port_in_use(port):
-    """Check if a port is already in use"""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(('127.0.0.1', port)) == 0
-
 if __name__ == '__main__':
-    try:
-        # Check if port is already in use and kill the process if needed
-        if is_port_in_use(PORT):
-            print(f"Port {PORT} is already in use. Attempting to free it...")
-            kill_process_on_port(PORT)
-            
-            # Give it a moment to free up
-            import time
-            time.sleep(.4)
-            
-            # Check again if port is still in use
-            if is_port_in_use(PORT):
-                print(f"Warning: Could not free port {PORT}. The server might not start properly.")
-            else:
-                print(f"Successfully freed port {PORT}")
-        
-        run_server()
-    except KeyboardInterrupt:
-        print("\nShutting down server...")
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=5000)
