@@ -1,0 +1,25 @@
+# Wails build artifacts
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Node.js dependencies (if using a frontend framework that uses npm/yarn)
+frontend/node_modules/
+frontend/package-lock.json
+frontend/yarn.lock
+frontend/dist
+
+# Go module cache
+vendor/
+
+# IDE/OS specific files
+.idea/
+.vscode/
+*.swp
+*.bak
+.DS_Store
+Thumbs.db
