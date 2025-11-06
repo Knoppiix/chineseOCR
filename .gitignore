@@ -1,3 +1,4 @@
+python-api/
 # Wails build artifacts
 build/
 *.exe
@@ -8,7 +9,7 @@ build/
 *.out
 
 # Node.js dependencies (if using a frontend framework that uses npm/yarn)
-frontend/node_modules/
+node_modules/
 frontend/package-lock.json
 frontend/yarn.lock
 frontend/dist
