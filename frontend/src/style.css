@@ -1,0 +1,103 @@
+/* Reset */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── Results mode: small opaque card ──────────────────────────────────── */
+body.results {
+  width: 480px;
+  height: 300px;
+  background: #1e1e1e;
+  color: #e0e0e0;
+  font-family: system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Frameless drag handle + close button.
+   Wails uses its own draggable property (--wails-draggable: drag), NOT the
+   Electron-style -webkit-app-region. */
+#titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: #141414;
+  --wails-draggable: drag;
+}
+
+.app-title {
+  font-size: 12px;
+  color: #666;
+  --wails-draggable: drag;
+}
+
+#close-btn {
+  --wails-draggable: no-drag;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #3a3a3a;
+  color: #aaa;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+#close-btn:hover { background: #c0392b; color: #fff; }
+
+#content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 24px 20px;
+  --wails-draggable: no-drag;
+}
+
+#status {
+  font-size: 14px;
+  color: #888;
+  margin-bottom: 12px;
+  min-height: 1.4em;
+}
+
+#result.hanzi {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: #f0f0f0;
+  margin-bottom: 16px;
+  word-break: break-all;
+  min-height: 1.4em;
+}
+
+.btn-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+button {
+  padding: 8px 20px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #2a2a2a;
+  color: #e0e0e0;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+button:hover { background: #3a3a3a; }
+button:active { background: #444; }
+
+/* Region selection is handled by the OS's native screenshot picker (via the
+   XDG portal, driven from Go), so there is no in-app selection overlay. */

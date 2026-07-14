@@ -5,8 +5,22 @@
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>chinese-OCR</title>
 </head>
-<body>
-<div id="app"></div>
-<script src="./src/main.js" type="module"></script>
+<body class="results">
+  <div id="app">
+    <div id="titlebar">
+      <span class="app-title">Chinese OCR</span>
+      <button id="close-btn" title="Hide to tray">×</button>
+    </div>
+    <div id="content">
+      <p id="status">Loading…</p>
+      <p id="result" class="hanzi"></p>
+      <div class="btn-row">
+        <button id="capture-btn">Capture</button>
+        <button id="copy-btn">Copy</button>
+      </div>
+    </div>
+  </div>
+  <link rel="stylesheet" href="./src/style.css" />
+  <script src="./src/main.js" type="module"></script>
 </body>
 </html>

@@ -14,6 +14,9 @@ frontend/package-lock.json
 frontend/yarn.lock
 frontend/dist
 
+# Bundled OCR model files (~30 MB — download via scripts/download-models.sh or npm run build)
+frontend/public/models/
+
 # Go module cache
 vendor/
 

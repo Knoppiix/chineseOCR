@@ -9,5 +9,6 @@
   "author": {
     "name": "Knoppiix",
     "email": "gwendal.p@protonmail.com"
-  }
+  },
+  "buildTags": "webkit2_41"
 }
