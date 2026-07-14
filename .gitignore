@@ -12,7 +12,8 @@ build/
 node_modules/
 frontend/package-lock.json
 frontend/yarn.lock
-frontend/dist
+frontend/dist/*
+!frontend/dist/.gitkeep
 
 # Bundled OCR model files (~30 MB — download via scripts/download-models.sh or npm run build)
 frontend/public/models/
