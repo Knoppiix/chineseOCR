@@ -4,6 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "models": "node scripts/download-models.mjs",
+    "predev": "node scripts/download-models.mjs",
+    "prebuild": "node scripts/download-models.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"

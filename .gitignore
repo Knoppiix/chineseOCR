@@ -15,7 +15,8 @@ frontend/yarn.lock
 frontend/dist/*
 !frontend/dist/.gitkeep
 
-# Bundled OCR model files (~30 MB — download via scripts/download-models.sh or npm run build)
+# Bundled OCR model files (~30 MB — fetched by frontend/scripts/download-models.mjs,
+# which runs automatically on `npm run dev` / `npm run build`, or `npm run models`)
 frontend/public/models/
 
 # Go module cache

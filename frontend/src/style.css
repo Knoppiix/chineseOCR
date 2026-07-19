@@ -99,5 +99,46 @@ button {
 button:hover { background: #3a3a3a; }
 button:active { background: #444; }
 
-/* Region selection is handled by the OS's native screenshot picker (via the
-   XDG portal, driven from Go), so there is no in-app selection overlay. */
+/* ── Region selection overlay (Windows/macOS) ──────────────────────────────
+   On Linux, region selection is handled by the OS's native screenshot picker
+   (XDG portal, driven from Go). On Windows/macOS, Go captures the whole desktop
+   and this fullscreen overlay lets the user draw the region to OCR. */
+#overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.35);
+  cursor: crosshair;
+  overflow: hidden;
+  --wails-draggable: no-drag;
+}
+
+#overlay-img {
+  position: absolute;
+  user-select: none;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+#overlay-rect {
+  position: absolute;
+  border: 1.5px solid #4ea1ff;
+  background: rgba(78, 161, 255, 0.15);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+#overlay-hint {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: rgba(20, 20, 20, 0.85);
+  color: #e0e0e0;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  pointer-events: none;
+  user-select: none;
+}

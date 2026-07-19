@@ -1,18 +1,16 @@
 package main
 
 import (
-	"encoding/base64"
-	"fmt"
-	"net/url"
-	"os"
-	"strings"
-	"sync/atomic"
+	"context"
 
 	"github.com/energye/systray"
-	"github.com/godbus/dbus/v5"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
 
-	"context"
+// Window dimensions for the small results card (must match main.go / style.css).
+const (
+	resultsWidth  = 480
+	resultsHeight = 300
 )
 
 type App struct {
@@ -25,7 +23,8 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	// energye/systray on Linux talks to the desktop tray over DBus (the
 	// StatusNotifierItem/AppIndicator spec) — no GTK, so it coexists with
-	// Wails' GTK main loop. Run it in a goroutine; handlers use a.ctx.
+	// Wails' GTK main loop. On Windows/macOS it uses the native tray. Run it in
+	// a goroutine; handlers use a.ctx.
 	go systray.Run(a.onTrayReady, func() {})
 }
 
@@ -62,86 +61,52 @@ func (a *App) Quit() {
 // HideWindow returns the window to the tray (used by the in-window × button).
 func (a *App) HideWindow() { runtime.WindowHide(a.ctx) }
 
-// Capture hides the window, asks the desktop's native screenshot picker (via the
-// XDG portal) to select + capture a region, then hands the cropped PNG to JS for
-// OCR and reveals the results window. Selection is done by the OS — not a webview
-// overlay — so it is unaffected by the WebKitGTK HiDPI/Wayland fullscreen scaling
-// bug that broke the in-app overlay.
+// Capture hides the window and grabs the screen via the platform-specific
+// backend (screenshot_linux.go / screenshot_other.go), then routes the result:
+//
+//   - NeedsSelect == false (Linux/XDG portal): the OS already cropped the region,
+//     so hand the PNG straight to JS for OCR and show the small results window.
+//
+//   - NeedsSelect == true (Windows/macOS/kbinani): the backend captured the whole
+//     virtual desktop, so go fullscreen and let the frontend overlay handle the
+//     region selection before OCR (see FinishSelection / CancelSelection).
 func (a *App) Capture() {
 	runtime.WindowHide(a.ctx)
 
-	b64, err := captureRegionViaPortal()
+	res, err := captureScreenshot()
 	if err != nil {
 		runtime.LogErrorf(a.ctx, "Capture: %v", err)
 		return
 	}
-	if b64 == "" {
+	if res == nil {
 		return // user cancelled — stay in the tray
 	}
 
-	runtime.EventsEmit(a.ctx, "capture:done", b64)
+	if res.NeedsSelect {
+		runtime.EventsEmit(a.ctx, "capture:select", res.Image)
+		runtime.WindowFullscreen(a.ctx)
+		runtime.WindowShow(a.ctx)
+		return
+	}
+
+	runtime.EventsEmit(a.ctx, "capture:done", res.Image)
 	runtime.WindowCenter(a.ctx)
 	runtime.WindowShow(a.ctx)
 }
 
-var portalToken uint64
+// FinishSelection is called by the frontend once the user has drawn a region in
+// the fullscreen overlay: it leaves fullscreen and restores the small results
+// window so the OCR output can be shown.
+func (a *App) FinishSelection() {
+	runtime.WindowUnfullscreen(a.ctx)
+	runtime.WindowSetSize(a.ctx, resultsWidth, resultsHeight)
+	runtime.WindowCenter(a.ctx)
+}
 
-// captureRegionViaPortal drives org.freedesktop.portal.Screenshot in interactive
-// mode (the desktop's native area picker) and returns the captured PNG as a
-// base64 string. Returns "" if the user cancels.
-func captureRegionViaPortal() (string, error) {
-	conn, err := dbus.ConnectSessionBus()
-	if err != nil {
-		return "", fmt.Errorf("connect session bus: %w", err)
-	}
-	defer conn.Close()
-
-	// Match the Response signal before issuing the request to avoid a race.
-	if err := conn.AddMatchSignal(
-		dbus.WithMatchInterface("org.freedesktop.portal.Request"),
-		dbus.WithMatchMember("Response"),
-	); err != nil {
-		return "", fmt.Errorf("add match: %w", err)
-	}
-	ch := make(chan *dbus.Signal, 4)
-	conn.Signal(ch)
-
-	token := fmt.Sprintf("chineseocr%d", atomic.AddUint64(&portalToken, 1))
-	options := map[string]dbus.Variant{
-		"interactive":  dbus.MakeVariant(true),
-		"handle_token": dbus.MakeVariant(token),
-	}
-
-	obj := conn.Object("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop")
-	var requestPath dbus.ObjectPath
-	if err := obj.Call("org.freedesktop.portal.Screenshot.Screenshot", 0, "", options).Store(&requestPath); err != nil {
-		return "", fmt.Errorf("call Screenshot: %w", err)
-	}
-
-	for sig := range ch {
-		if sig.Path != requestPath || len(sig.Body) < 2 {
-			continue
-		}
-		response, _ := sig.Body[0].(uint32)
-		if response != 0 {
-			return "", nil // 1 = cancelled, 2 = ended some other way
-		}
-		results, _ := sig.Body[1].(map[string]dbus.Variant)
-		uriV, ok := results["uri"]
-		if !ok {
-			return "", fmt.Errorf("portal response had no uri")
-		}
-		uri, _ := uriV.Value().(string)
-		path := strings.TrimPrefix(uri, "file://")
-		if p, err := url.PathUnescape(path); err == nil {
-			path = p
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("read screenshot %q: %w", path, err)
-		}
-		_ = os.Remove(path) // best-effort cleanup of the portal's temp file
-		return base64.StdEncoding.EncodeToString(data), nil
-	}
-	return "", nil
+// CancelSelection is called by the frontend when the user aborts the overlay
+// (Escape): it leaves fullscreen and hides back to the tray.
+func (a *App) CancelSelection() {
+	runtime.WindowUnfullscreen(a.ctx)
+	runtime.WindowSetSize(a.ctx, resultsWidth, resultsHeight)
+	runtime.WindowHide(a.ctx)
 }
