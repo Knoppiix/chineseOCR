@@ -2,9 +2,12 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 /* ── Results mode: small opaque card ──────────────────────────────────── */
+/* Fill whatever window size Go set (small results card, or the taller session
+   summary window) rather than a fixed pixel size. */
+html, body { height: 100%; }
 body.results {
-  width: 480px;
-  height: 300px;
+  width: 100vw;
+  height: 100vh;
   background: #1e1e1e;
   color: #e0e0e0;
   font-family: system-ui, sans-serif;
@@ -142,3 +145,90 @@ button:active { background: #444; }
   pointer-events: none;
   user-select: none;
 }
+
+/* ── Learning-session summary ──────────────────────────────────────────────── */
+#session-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px 20px 18px;
+  gap: 14px;
+}
+
+#session-progress-wrap { margin: auto 0; text-align: center; }
+#session-progress { font-size: 14px; color: #ccc; margin-bottom: 12px; }
+
+.bar-track {
+  height: 6px;
+  border-radius: 3px;
+  background: #333;
+  overflow: hidden;
+}
+#session-bar {
+  height: 100%;
+  width: 0;
+  background: #4ea1ff;
+  transition: width 0.15s ease;
+}
+
+#session-summary {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  gap: 10px;
+}
+#summary-title { font-size: 13px; color: #aaa; }
+
+.sort-row { display: flex; gap: 6px; }
+.sort-row button {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 5px;
+}
+.sort-row button.active {
+  background: #4ea1ff;
+  border-color: #4ea1ff;
+  color: #08121f;
+}
+
+.table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid #2c2c2c;
+  border-radius: 8px;
+}
+.table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.table-wrap th, .table-wrap td {
+  text-align: left;
+  padding: 7px 12px;
+  border-bottom: 1px solid #262626;
+}
+.table-wrap thead th {
+  position: sticky;
+  top: 0;
+  background: #191919;
+  color: #888;
+  font-weight: 600;
+  font-size: 12px;
+}
+.table-wrap td.hz {
+  font-size: 20px;
+  font-weight: 600;
+  color: #f0f0f0;
+}
+.table-wrap tbody tr:hover { background: #242424; }
+#session-summary .btn-row { margin-top: 12px; }

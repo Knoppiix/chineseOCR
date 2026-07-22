@@ -11,6 +11,7 @@
       <span class="app-title">Chinese OCR</span>
       <button id="close-btn" title="Hide to tray">×</button>
     </div>
+
     <div id="content">
       <p id="status">Loading…</p>
       <p id="result" class="hanzi"></p>
@@ -19,7 +20,33 @@
         <button id="copy-btn">Copy</button>
       </div>
     </div>
+
+    <!-- Learning-session summary view (shown after a recording session stops). -->
+    <div id="session-view" hidden>
+      <div id="session-progress-wrap">
+        <p id="session-progress">Preparing…</p>
+        <div class="bar-track"><div id="session-bar"></div></div>
+      </div>
+
+      <div id="session-summary" hidden>
+        <div class="summary-head">
+          <span id="summary-title"></span>
+          <div class="sort-row">
+            <button id="sort-count" class="active">By count</button>
+            <button id="sort-time">By time</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>字</th><th>Count</th><th>On&nbsp;screen</th></tr></thead>
+            <tbody id="summary-body"></tbody>
+          </table>
+        </div>
+        <div class="btn-row"><button id="session-done">Done</button></div>
+      </div>
+    </div>
   </div>
+
   <link rel="stylesheet" href="./src/style.css" />
   <script src="./src/main.js" type="module"></script>
 </body>

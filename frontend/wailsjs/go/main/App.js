@@ -10,6 +10,10 @@ export function Capture() {
   return window['go']['main']['App']['Capture']();
 }
 
+export function ClearSession() {
+  return window['go']['main']['App']['ClearSession']();
+}
+
 export function FinishSelection() {
   return window['go']['main']['App']['FinishSelection']();
 }
@@ -20,4 +24,20 @@ export function HideWindow() {
 
 export function Quit() {
   return window['go']['main']['App']['Quit']();
+}
+
+export function SessionFrame(arg1) {
+  return window['go']['main']['App']['SessionFrame'](arg1);
+}
+
+export function SessionFrameCount() {
+  return window['go']['main']['App']['SessionFrameCount']();
+}
+
+export function StartSession() {
+  return window['go']['main']['App']['StartSession']();
+}
+
+export function StopSession() {
+  return window['go']['main']['App']['StopSession']();
 }

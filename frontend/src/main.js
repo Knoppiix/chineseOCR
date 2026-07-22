@@ -1,5 +1,5 @@
 import { EventsOn } from "../wailsjs/runtime/runtime.js";
-import { Capture, HideWindow, CancelSelection, FinishSelection } from "../wailsjs/go/main/App.js";
+import { Capture, HideWindow, CancelSelection, FinishSelection, ClearSession, SessionFrame } from "../wailsjs/go/main/App.js";
 import * as ort from "onnxruntime-web";
 import { PaddleOcrService } from "ppu-paddle-ocr/web";
 
@@ -22,13 +22,29 @@ let ocrService = null;
 //   • "capture:select" — Windows/macOS captured the whole desktop; we crop it
 //                        here via a fullscreen selection overlay.
 
-// recognize runs the OCR model on raw PNG/JPEG bytes and shows the Chinese text.
+const isHan = (c) => /\p{Script=Han}/u.test(c);
+
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+// ocrText runs the model on raw image bytes and returns the recognised text.
+async function ocrText(bytes) {
+  if (!ocrService) throw new Error("OCR model not loaded yet");
+  const res = await ocrService.recognize(bytes.buffer);
+  return res.text || "";
+}
+
+// recognize handles a single already-cropped image (portal / overlay path) and
+// shows the Chinese text in the results card.
 async function recognize(bytes) {
   if (!ocrService) { showStatus("OCR model still loading…"); return; }
   showStatus("Recognising…");
   try {
-    const res = await ocrService.recognize(bytes.buffer);
-    const han = [...res.text].filter((c) => /\p{Script=Han}/u.test(c)).join("");
+    const han = [...(await ocrText(bytes))].filter(isHan).join("");
     showResult(han || "(no Chinese text found)");
   } catch (err) {
     showStatus("OCR error: " + err.message);
@@ -39,10 +55,7 @@ async function recognize(bytes) {
 // runOCR handles the already-cropped image handed over as base64 (portal path).
 async function runOCR(b64) {
   if (!b64) { showStatus("No image captured."); return; }
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  await recognize(bytes);
+  await recognize(b64ToBytes(b64));
 }
 
 // ── Region selection overlay (Windows/macOS) ─────────────────────────────────
@@ -155,6 +168,77 @@ function startRegionSelection(b64) {
   window.addEventListener("resize", layout);
 }
 
+// ── Learning session summary ─────────────────────────────────────────────────
+// The session capture + dedup happened natively (Go); on stop we get a frame
+// count and pull each retained frame, OCR it here, and tally the most-shown
+// Chinese characters by occurrence count and on-screen duration.
+let sessionTally = null; // Map<char, {count, ms}>
+
+async function processSession(count) {
+  document.getElementById("content").hidden = true;
+  document.getElementById("session-view").hidden = false;
+  document.getElementById("session-progress-wrap").hidden = false;
+  document.getElementById("session-summary").hidden = true;
+
+  const progress = document.getElementById("session-progress");
+  const bar = document.getElementById("session-bar");
+  const tally = new Map();
+
+  if (!count) {
+    progress.textContent =
+      "No frames captured — the screen never changed, or recording isn't supported here.";
+  }
+
+  for (let i = 0; i < count; i++) {
+    progress.textContent = `Analysing frame ${i + 1} / ${count}…`;
+    bar.style.width = `${Math.round((i / count) * 100)}%`;
+    try {
+      const meta = await SessionFrame(i);
+      const text = await ocrText(b64ToBytes(meta.data));
+      // Count each distinct character once per frame; add the frame's on-screen
+      // time so a character shown longer ranks higher when sorting by time.
+      for (const ch of new Set([...text].filter(isHan))) {
+        const e = tally.get(ch) || { count: 0, ms: 0 };
+        e.count += 1;
+        e.ms += meta.durationMs || 0;
+        tally.set(ch, e);
+      }
+    } catch (err) {
+      console.error("session frame", i, err);
+    }
+  }
+  bar.style.width = "100%";
+  sessionTally = tally;
+  renderSummary("count");
+}
+
+function renderSummary(sortKey) {
+  document.getElementById("session-progress-wrap").hidden = true;
+  document.getElementById("session-summary").hidden = false;
+
+  const rows = [...(sessionTally?.entries() ?? [])].map(([ch, e]) => ({
+    ch, count: e.count, ms: e.ms,
+  }));
+  rows.sort((a, b) => (sortKey === "time" ? b.ms - a.ms : b.count - a.count));
+
+  document.getElementById("summary-title").textContent = rows.length
+    ? `${rows.length} distinct Chinese characters`
+    : "No Chinese characters found";
+
+  const tbody = document.getElementById("summary-body");
+  tbody.textContent = "";
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    const hz = document.createElement("td"); hz.className = "hz"; hz.textContent = r.ch;
+    const cnt = document.createElement("td"); cnt.textContent = String(r.count);
+    const dur = document.createElement("td"); dur.textContent = `${(r.ms / 1000).toFixed(1)}s`;
+    tr.append(hz, cnt, dur);
+    tbody.appendChild(tr);
+  }
+  document.getElementById("sort-count").classList.toggle("active", sortKey !== "time");
+  document.getElementById("sort-time").classList.toggle("active", sortKey === "time");
+}
+
 // ── DOM helpers ────────────────────────────────────────────────────────────
 function showStatus(msg) {
   document.getElementById("status").textContent = msg;
@@ -169,12 +253,25 @@ function showResult(text) {
 // ── Wails wiring ───────────────────────────────────────────────────────────
 EventsOn("capture:done", (b64) => runOCR(b64));
 EventsOn("capture:select", (b64) => startRegionSelection(b64));
+EventsOn("session:stopped", (count) => processSession(count));
+EventsOn("session:error", (msg) => showStatus("Session error: " + msg));
 
 document.getElementById("capture-btn").addEventListener("click", () => Capture());
 
 document.getElementById("copy-btn").addEventListener("click", () => {
   const text = document.getElementById("result").textContent;
   if (text) navigator.clipboard.writeText(text);
+});
+
+document.getElementById("sort-count").addEventListener("click", () => renderSummary("count"));
+document.getElementById("sort-time").addEventListener("click", () => renderSummary("time"));
+
+// Done: drop the on-disk frames, return to the results card, hide to tray.
+document.getElementById("session-done").addEventListener("click", async () => {
+  try { await ClearSession(); } catch (err) { console.error(err); }
+  document.getElementById("session-view").hidden = true;
+  document.getElementById("content").hidden = false;
+  HideWindow();
 });
 
 // × returns the window to the tray; the app keeps running. Quit from the tray.
