@@ -58,6 +58,41 @@ async function runOCR(b64) {
   await recognize(b64ToBytes(b64));
 }
 
+// ── Word segmentation ─────────────────────────────────────────────────────────
+// Chinese has no spaces between words, so the OCR gives us character runs per
+// line; we split those into meaningful words with the browser's built-in ICU
+// segmenter (present in WebView2 / Chromium). Falls back to per-character.
+const wordSeg = "Segmenter" in Intl ? new Intl.Segmenter("zh", { granularity: "word" }) : null;
+
+// Optional OCR-noise filter — IMPLEMENTED BUT OFF by default. Flip
+// ENABLE_CONFIDENCE_FILTER to true to drop low-confidence recognised items
+// before segmentation (trims garbage tokens from badly-read lines).
+const ENABLE_CONFIDENCE_FILTER = false;
+const MIN_OCR_CONFIDENCE = 0.6;
+const keepItem = (it) => !ENABLE_CONFIDENCE_FILTER || (it?.confidence ?? 1) >= MIN_OCR_CONFIDENCE;
+
+// ocrLines runs the model and returns the recognised text grouped by line, with
+// character order preserved (word segmentation needs adjacent characters). We
+// segment each line separately so no word straddles a line boundary.
+async function ocrLines(bytes) {
+  if (!ocrService) throw new Error("OCR model not loaded yet");
+  const res = await ocrService.recognize(bytes.buffer);
+  if (Array.isArray(res.lines)) {
+    return res.lines.map((line) => line.filter(keepItem).map((it) => it.text).join(""));
+  }
+  return [res.text || ""]; // fallback if the build doesn't expose per-line data
+}
+
+// segmentWords splits one line into words that contain Chinese characters.
+function segmentWords(line) {
+  if (!wordSeg) return [...line].filter(isHan); // fallback: per character
+  const out = [];
+  for (const s of wordSeg.segment(line)) {
+    if (s.isWordLike && [...s.segment].some(isHan)) out.push(s.segment);
+  }
+  return out;
+}
+
 // ── Region selection overlay (Windows/macOS) ─────────────────────────────────
 // Go captured the full virtual desktop and put the window in fullscreen. We show
 // the image and let the user drag a rectangle; on release we crop that region
@@ -170,9 +205,9 @@ function startRegionSelection(b64) {
 
 // ── Learning session summary ─────────────────────────────────────────────────
 // The session capture + dedup happened natively (Go); on stop we get a frame
-// count and pull each retained frame, OCR it here, and tally the most-shown
-// Chinese characters by occurrence count and on-screen duration.
-let sessionTally = null; // Map<char, {count, ms}>
+// count and pull each retained frame, OCR it here, segment the lines into words,
+// and tally the most-shown Chinese words by occurrence count and on-screen time.
+let sessionTally = null; // Map<word, {count, ms}>
 
 async function processSession(count) {
   document.getElementById("content").hidden = true;
@@ -194,14 +229,15 @@ async function processSession(count) {
     bar.style.width = `${Math.round((i / count) * 100)}%`;
     try {
       const meta = await SessionFrame(i);
-      const text = await ocrText(b64ToBytes(meta.data));
-      // Count each distinct character once per frame; add the frame's on-screen
-      // time so a character shown longer ranks higher when sorting by time.
-      for (const ch of new Set([...text].filter(isHan))) {
-        const e = tally.get(ch) || { count: 0, ms: 0 };
+      const lines = await ocrLines(b64ToBytes(meta.data));
+      // Count each distinct word once per frame; add the frame's on-screen time
+      // so a word shown longer ranks higher when sorting by time.
+      const words = new Set(lines.flatMap(segmentWords));
+      for (const w of words) {
+        const e = tally.get(w) || { count: 0, ms: 0 };
         e.count += 1;
         e.ms += meta.durationMs || 0;
-        tally.set(ch, e);
+        tally.set(w, e);
       }
     } catch (err) {
       console.error("session frame", i, err);
@@ -216,27 +252,50 @@ function renderSummary(sortKey) {
   document.getElementById("session-progress-wrap").hidden = true;
   document.getElementById("session-summary").hidden = false;
 
-  const rows = [...(sessionTally?.entries() ?? [])].map(([ch, e]) => ({
-    ch, count: e.count, ms: e.ms,
+  const rows = [...(sessionTally?.entries() ?? [])].map(([word, e]) => ({
+    word, count: e.count, ms: e.ms,
   }));
   rows.sort((a, b) => (sortKey === "time" ? b.ms - a.ms : b.count - a.count));
 
   document.getElementById("summary-title").textContent = rows.length
-    ? `${rows.length} distinct Chinese characters`
-    : "No Chinese characters found";
+    ? `${rows.length} distinct Chinese words`
+    : "No Chinese words found";
 
   const tbody = document.getElementById("summary-body");
   tbody.textContent = "";
   for (const r of rows) {
     const tr = document.createElement("tr");
-    const hz = document.createElement("td"); hz.className = "hz"; hz.textContent = r.ch;
+
+    const hz = document.createElement("td"); hz.className = "hz"; hz.textContent = r.word;
     const cnt = document.createElement("td"); cnt.textContent = String(r.count);
     const dur = document.createElement("td"); dur.textContent = `${(r.ms / 1000).toFixed(1)}s`;
-    tr.append(hz, cnt, dur);
+
+    const copyTd = document.createElement("td");
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "copy-word";
+    copyBtn.textContent = "📋";
+    copyBtn.title = `Copy “${r.word}”`;
+    copyBtn.addEventListener("click", () => copyWord(copyBtn, r.word));
+    copyTd.appendChild(copyBtn);
+
+    tr.append(hz, cnt, dur, copyTd);
     tbody.appendChild(tr);
   }
   document.getElementById("sort-count").classList.toggle("active", sortKey !== "time");
   document.getElementById("sort-time").classList.toggle("active", sortKey === "time");
+}
+
+// copyWord copies a word to the clipboard with brief in-button feedback.
+async function copyWord(btn, word) {
+  try {
+    await navigator.clipboard.writeText(word);
+    btn.textContent = "✓";
+    btn.classList.add("copied");
+    setTimeout(() => { btn.textContent = "📋"; btn.classList.remove("copied"); }, 900);
+  } catch (err) {
+    console.error("copy word", err);
+  }
 }
 
 // ── DOM helpers ────────────────────────────────────────────────────────────

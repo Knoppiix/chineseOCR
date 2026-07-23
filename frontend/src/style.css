@@ -231,4 +231,15 @@ button:active { background: #444; }
   color: #f0f0f0;
 }
 .table-wrap tbody tr:hover { background: #242424; }
+.table-wrap td:last-child { width: 1%; text-align: right; white-space: nowrap; }
+
+.copy-word {
+  padding: 2px 9px;
+  font-size: 14px;
+  line-height: 1.2;
+  border-radius: 5px;
+  background: #2a2a2a;
+}
+.copy-word.copied { background: #2e7d32; border-color: #2e7d32; }
+
 #session-summary .btn-row { margin-top: 12px; }
