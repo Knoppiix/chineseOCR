@@ -1,7 +1,8 @@
 import { EventsOn } from "../wailsjs/runtime/runtime.js";
-import { Capture, HideWindow, CancelSelection, FinishSelection, ClearSession, SessionFrame } from "../wailsjs/go/main/App.js";
+import { Capture, HideWindow, CancelSelection, FinishSelection, ClearSession, SessionFrame, GetView, SaveCSV } from "../wailsjs/go/main/App.js";
 import * as ort from "onnxruntime-web";
 import { PaddleOcrService } from "ppu-paddle-ocr/web";
+import { loadDictionary, lookup } from "./dict.js";
 
 // ort builds its WASM URL relative to the JS chunk by default; point it at the
 // static-copied binaries in /assets/ so the webview can load them locally.
@@ -89,6 +90,25 @@ function segmentWords(line) {
   const out = [];
   for (const s of wordSeg.segment(line)) {
     if (s.isWordLike && [...s.segment].some(isHan)) out.push(s.segment);
+  }
+  return out;
+}
+
+// segmentWordsWithSpans is like segmentWords but also reports each word's
+// character span (UTF-16 offsets) within the line, so the overlay can carve a
+// per-word sub-box out of the line's bounding box.
+function segmentWordsWithSpans(line) {
+  const out = [];
+  if (!wordSeg) {
+    for (let i = 0; i < line.length; i++) {
+      if (isHan(line[i])) out.push({ word: line[i], start: i, end: i + 1 });
+    }
+    return out;
+  }
+  for (const s of wordSeg.segment(line)) {
+    if (s.isWordLike && [...s.segment].some(isHan)) {
+      out.push({ word: s.segment, start: s.index, end: s.index + s.segment.length });
+    }
   }
   return out;
 }
@@ -210,8 +230,8 @@ function startRegionSelection(b64) {
 let sessionTally = null; // Map<word, {count, ms}>
 
 async function processSession(count) {
-  document.getElementById("content").hidden = true;
-  document.getElementById("session-view").hidden = false;
+  // Go has already switched us to the session view (view:change); just reset the
+  // sub-state so a previous summary never flashes before the new progress bar.
   document.getElementById("session-progress-wrap").hidden = false;
   document.getElementById("session-summary").hidden = true;
 
@@ -286,6 +306,19 @@ function renderSummary(sortKey) {
   document.getElementById("sort-time").classList.toggle("active", sortKey === "time");
 }
 
+// summaryToCSV serialises the current tally as CSV (sorted by count, desc).
+// A UTF-8 BOM is prepended so Excel opens the Chinese text correctly.
+function summaryToCSV() {
+  const rows = [...(sessionTally?.entries() ?? [])]
+    .map(([word, e]) => ({ word, count: e.count, sec: e.ms / 1000 }))
+    .sort((a, b) => b.count - a.count);
+  const cell = (v) => `"${String(v).replace(/"/g, '""')}"`;
+  const lines = ["Word,Count,SecondsOnScreen"];
+  for (const r of rows) lines.push(`${cell(r.word)},${r.count},${r.sec.toFixed(1)}`);
+  const bom = String.fromCharCode(0xfeff); // UTF-8 BOM so Excel reads UTF-8
+  return bom + lines.join("\r\n") + "\r\n";
+}
+
 // copyWord copies a word to the clipboard with brief in-button feedback.
 async function copyWord(btn, word) {
   try {
@@ -296,6 +329,75 @@ async function copyWord(btn, word) {
   } catch (err) {
     console.error("copy word", err);
   }
+}
+
+// ── Hover-lookup overlay ─────────────────────────────────────────────────────
+// Go captured the screen (overlay:analyze) and streams the cursor (overlay:cursor,
+// physical px). We OCR the snapshot once, segment each detected line into words,
+// carve a per-word sub-box out of the line box, and look each word up. Hit-test
+// happens here (the click-through window gets no DOM mouse events).
+let overlayWords = [];              // [{ box:{x,y,w,h} image px, word, pinyin, senses }]
+let overlayOrigin = { x: 0, y: 0 }; // captured display's screen origin
+
+async function analyzeOverlay({ image, originX, originY }) {
+  overlayOrigin = { x: originX, y: originY };
+  overlayWords = [];
+  hideOverlayCard();
+  if (!ocrService) return;
+
+  try {
+    await loadDictionary();
+    const res = await ocrService.recognize(b64ToBytes(image).buffer);
+    for (const item of (res.lines ?? []).flat()) {
+      const text = item.text ?? "";
+      const box = item.box;
+      if (!box || !text) continue;
+      const n = text.length; // UTF-16 units; matches segment .index (CJK is BMP)
+      for (const w of segmentWordsWithSpans(text)) {
+        const entry = lookup(w.word);
+        overlayWords.push({
+          box: {
+            x: box.x + (box.width * w.start) / n,
+            y: box.y,
+            w: (box.width * (w.end - w.start)) / n,
+            h: box.height,
+          },
+          word: w.word,
+          pinyin: entry?.pinyin ?? "",
+          senses: entry?.senses ?? [],
+        });
+      }
+    }
+  } catch (err) {
+    console.error("overlay analyze", err);
+  }
+}
+
+function onOverlayCursor({ x, y }) {
+  const ix = x - overlayOrigin.x;
+  const iy = y - overlayOrigin.y;
+  const hit = overlayWords.find(
+    (w) => ix >= w.box.x && ix <= w.box.x + w.box.w && iy >= w.box.y && iy <= w.box.y + w.box.h,
+  );
+  if (hit) showOverlayCard(hit); else hideOverlayCard();
+}
+
+function showOverlayCard(w) {
+  const card = document.getElementById("overlay-card");
+  const dpr = window.devicePixelRatio || 1;
+  card.querySelector(".oc-word").textContent = w.word;
+  card.querySelector(".oc-pinyin").textContent = w.pinyin || "—";
+  card.querySelector(".oc-sense").textContent =
+    w.senses.length ? w.senses.slice(0, 4).join("; ") : "(not in dictionary)";
+  // Positioned just under the word. Box is in image px == screen px for the
+  // primary display (origin cancels with the fullscreen window); CSS px = /dpr.
+  card.style.left = `${w.box.x / dpr}px`;
+  card.style.top = `${(w.box.y + w.box.h) / dpr + 4}px`;
+  card.hidden = false;
+}
+
+function hideOverlayCard() {
+  document.getElementById("overlay-card").hidden = true;
 }
 
 // ── DOM helpers ────────────────────────────────────────────────────────────
@@ -309,11 +411,35 @@ function showResult(text) {
   document.getElementById("result").textContent = text;
 }
 
+// ── Views ────────────────────────────────────────────────────────────────────
+// Go owns the current view and pushes it via "view:change"; the frontend is a
+// pure function of it — show exactly this view's container, hide the rest. A new
+// mode = a new container + a branch here.
+function applyView(view) {
+  const isSession = view === "session";
+  const isOverlay = view === "overlay";
+  document.getElementById("content").hidden = isSession || isOverlay;
+  document.getElementById("session-view").hidden = !isSession;
+  document.getElementById("overlay-view").hidden = !isOverlay;
+  // The in-app titlebar must vanish in overlay mode (only the cards should show).
+  document.getElementById("titlebar").hidden = isOverlay;
+  // Transparent page background only in overlay mode (so the game shows through).
+  document.body.classList.toggle("view-overlay", isOverlay);
+  if (!isOverlay) document.getElementById("overlay-card").hidden = true;
+}
+
+EventsOn("overlay:analyze", (frame) => analyzeOverlay(frame));
+EventsOn("overlay:cursor", (pos) => onOverlayCursor(pos));
+
 // ── Wails wiring ───────────────────────────────────────────────────────────
 EventsOn("capture:done", (b64) => runOCR(b64));
 EventsOn("capture:select", (b64) => startRegionSelection(b64));
 EventsOn("session:stopped", (count) => processSession(count));
 EventsOn("session:error", (msg) => showStatus("Session error: " + msg));
+EventsOn("view:change", (view) => applyView(view));
+
+// Sync to Go's current view on load so the window never opens on a stale view.
+GetView().then(applyView).catch((err) => console.error(err));
 
 document.getElementById("capture-btn").addEventListener("click", () => Capture());
 
@@ -325,11 +451,20 @@ document.getElementById("copy-btn").addEventListener("click", () => {
 document.getElementById("sort-count").addEventListener("click", () => renderSummary("count"));
 document.getElementById("sort-time").addEventListener("click", () => renderSummary("time"));
 
-// Done: drop the on-disk frames, return to the results card, hide to tray.
+// Export the summary as a CSV via the native save dialog (Go writes the file).
+document.getElementById("export-csv").addEventListener("click", async () => {
+  if (!sessionTally || sessionTally.size === 0) return;
+  try {
+    await SaveCSV("chinese-session-summary.csv", summaryToCSV());
+  } catch (err) {
+    console.error("export csv", err);
+  }
+});
+
+// Done: drop the on-disk frames and return to the capture view (ClearSession
+// switches the view via Go's "view:change"), then hide to the tray.
 document.getElementById("session-done").addEventListener("click", async () => {
   try { await ClearSession(); } catch (err) { console.error(err); }
-  document.getElementById("session-view").hidden = true;
-  document.getElementById("content").hidden = false;
   HideWindow();
 });
 

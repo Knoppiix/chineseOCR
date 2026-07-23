@@ -24,8 +24,22 @@ const (
 	sessionWinHeight = 640
 )
 
+// UI views. Go is the single source of truth for which view the window shows;
+// it pushes the current view to the frontend (the "view:change" event) and the
+// frontend renders exactly that view — nothing else. Adding a future mode is a
+// new constant here, a container in index.html, and a case in applyView().
+const (
+	viewCapture = "capture" // the small screenshot → OCR results card (default/home)
+	viewSession = "session" // the learning-session processing + summary screen
+	viewOverlay = "overlay" // the transparent, click-through hover-lookup overlay
+)
+
 type App struct {
 	ctx context.Context
+
+	// Current UI view (guarded by viewMu). See the view* constants.
+	viewMu sync.Mutex
+	view   string
 
 	// Learning-session state (guarded by sessMu).
 	sessMu     sync.Mutex
@@ -34,17 +48,27 @@ type App struct {
 	sessDone   chan struct{}
 	sessProc   *sessionProcessor
 	sessDir    string
+
+	// Hover-overlay state (guarded by ovMu).
+	ovMu        sync.Mutex
+	overlayOn   bool
+	overlayStop chan struct{}
 }
 
 func NewApp() *App { return &App{} }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.view = viewCapture
 	// energye/systray on Linux talks to the desktop tray over DBus (the
 	// StatusNotifierItem/AppIndicator spec) — no GTK, so it coexists with
 	// Wails' GTK main loop. On Windows/macOS it uses the native tray. Run it in
 	// a goroutine; handlers use a.ctx.
 	go systray.Run(a.onTrayReady, func() {})
+
+	// Register the global hotkey that toggles the hover-lookup overlay
+	// (Windows-only; a no-op elsewhere).
+	a.initHotkey()
 }
 
 func (a *App) shutdown(_ context.Context) {
@@ -76,7 +100,7 @@ func (a *App) onTrayReady() {
 	// Capture blocks while the user picks a region, so run it off the DBus callback.
 	mCapture.Click(func() { go a.Capture() })
 	mSession.Click(func() { go a.toggleSession(mSession) })
-	mShow.Click(func() { runtime.WindowShow(a.ctx) })
+	mShow.Click(func() { a.showCaptureWindow() })
 	mQuit.Click(func() { a.Quit() })
 
 	// Some desktop environments need an explicit menu-show on click.
@@ -92,6 +116,53 @@ func (a *App) Quit() {
 
 // HideWindow returns the window to the tray (used by the in-window × button).
 func (a *App) HideWindow() { runtime.WindowHide(a.ctx) }
+
+// ── View state ───────────────────────────────────────────────────────────────
+
+// GetView returns the current view, so the frontend can sync on boot.
+func (a *App) GetView() string {
+	a.viewMu.Lock()
+	defer a.viewMu.Unlock()
+	if a.view == "" {
+		return viewCapture
+	}
+	return a.view
+}
+
+// setView records the current view and pushes it to the frontend.
+func (a *App) setView(v string) {
+	a.viewMu.Lock()
+	a.view = v
+	a.viewMu.Unlock()
+	runtime.EventsEmit(a.ctx, "view:change", v)
+}
+
+// returnToCapture drops any finished session, resizes back to the small results
+// card, and switches the frontend to the capture view. It does NOT touch window
+// visibility (callers decide) and never clears a session that is still recording.
+func (a *App) returnToCapture() {
+	a.sessMu.Lock()
+	var dir string
+	if !a.recording {
+		dir = a.sessDir
+		a.sessProc = nil
+		a.sessDir = ""
+	}
+	a.sessMu.Unlock()
+	if dir != "" {
+		_ = os.RemoveAll(dir) // best-effort cleanup of retained frames
+	}
+	runtime.WindowSetSize(a.ctx, resultsWidth, resultsHeight)
+	a.setView(viewCapture)
+}
+
+// showCaptureWindow (tray "Show window") always brings up the base capture view,
+// discarding any lingering session summary so the window never opens on stale
+// learning-mode UI.
+func (a *App) showCaptureWindow() {
+	a.returnToCapture()
+	runtime.WindowShow(a.ctx)
+}
 
 // Capture hides the window and grabs the screen via the platform-specific
 // backend (screenshot_linux.go / screenshot_other.go), then routes the result:
@@ -121,6 +192,8 @@ func (a *App) Capture() {
 		return
 	}
 
+	runtime.WindowSetSize(a.ctx, resultsWidth, resultsHeight)
+	a.setView(viewCapture)
 	runtime.EventsEmit(a.ctx, "capture:done", res.Image)
 	runtime.WindowCenter(a.ctx)
 	runtime.WindowShow(a.ctx)
@@ -133,6 +206,7 @@ func (a *App) FinishSelection() {
 	runtime.WindowUnfullscreen(a.ctx)
 	runtime.WindowSetSize(a.ctx, resultsWidth, resultsHeight)
 	runtime.WindowCenter(a.ctx)
+	a.setView(viewCapture)
 }
 
 // CancelSelection is called by the frontend when the user aborts the overlay
@@ -245,6 +319,7 @@ func (a *App) StopSession() (int, error) {
 	count := len(proc.frames)
 	runtime.WindowSetSize(a.ctx, sessionWinWidth, sessionWinHeight)
 	runtime.WindowCenter(a.ctx)
+	a.setView(viewSession)
 	runtime.WindowShow(a.ctx)
 	runtime.EventsEmit(a.ctx, "session:stopped", count)
 	return count, nil
@@ -282,18 +357,28 @@ func (a *App) SessionFrame(i int) (FrameMeta, error) {
 }
 
 // ClearSession deletes the retained frames from disk once the frontend is done
-// processing them, and returns the window to its normal size.
+// processing them (the summary's "Done" button), and returns to the capture view.
 func (a *App) ClearSession() error {
-	a.sessMu.Lock()
-	dir := a.sessDir
-	a.sessProc = nil
-	a.sessDir = ""
-	a.sessMu.Unlock()
-
-	runtime.WindowSetSize(a.ctx, resultsWidth, resultsHeight)
-
-	if dir != "" {
-		return os.RemoveAll(dir)
-	}
+	a.returnToCapture()
 	return nil
+}
+
+// SaveCSV prompts for a destination via the native save dialog and writes the
+// given content there. Returns the written path, or "" if the user cancelled.
+func (a *App) SaveCSV(defaultName, content string) (string, error) {
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Export session summary",
+		DefaultFilename: defaultName,
+		Filters:         []runtime.FileFilter{{DisplayName: "CSV files (*.csv)", Pattern: "*.csv"}},
+	})
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", nil // cancelled
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return "", fmt.Errorf("write CSV %q: %w", path, err)
+	}
+	return path, nil
 }

@@ -18,12 +18,20 @@ export function FinishSelection() {
   return window['go']['main']['App']['FinishSelection']();
 }
 
+export function GetView() {
+  return window['go']['main']['App']['GetView']();
+}
+
 export function HideWindow() {
   return window['go']['main']['App']['HideWindow']();
 }
 
 export function Quit() {
   return window['go']['main']['App']['Quit']();
+}
+
+export function SaveCSV(arg1, arg2) {
+  return window['go']['main']['App']['SaveCSV'](arg1, arg2);
 }
 
 export function SessionFrame(arg1) {

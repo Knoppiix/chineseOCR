@@ -10,9 +10,13 @@ export function ClearSession():Promise<void>;
 
 export function FinishSelection():Promise<void>;
 
+export function GetView():Promise<string>;
+
 export function HideWindow():Promise<void>;
 
 export function Quit():Promise<void>;
+
+export function SaveCSV(arg1:string,arg2:string):Promise<string>;
 
 export function SessionFrame(arg1:number):Promise<main.FrameMeta>;
 

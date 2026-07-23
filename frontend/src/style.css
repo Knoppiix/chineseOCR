@@ -1,6 +1,11 @@
 /* Reset */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* The `hidden` attribute must win over the explicit `display` rules below:
+   an ID selector's `display: flex` otherwise out-specifies the UA `[hidden]`
+   rule, so toggling `element.hidden` from JS would have no visual effect. */
+[hidden] { display: none !important; }
+
 /* ── Results mode: small opaque card ──────────────────────────────────── */
 /* Fill whatever window size Go set (small results card, or the taller session
    summary window) rather than a fixed pixel size. */
@@ -145,6 +150,28 @@ button:active { background: #444; }
   pointer-events: none;
   user-select: none;
 }
+
+/* ── Hover-lookup overlay ──────────────────────────────────────────────────── */
+/* In overlay mode the whole page is transparent (the Win32 window is
+   click-through + always-on-top), so only the card is visible over the game. */
+body.view-overlay { background: transparent; }
+
+#overlay-view { position: fixed; inset: 0; }
+
+#overlay-card {
+  position: fixed;
+  max-width: 280px;
+  padding: 8px 12px;
+  border: 1px solid #4ea1ff;
+  border-radius: 8px;
+  background: rgba(18, 18, 18, 0.92);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+  font-family: system-ui, sans-serif;
+  pointer-events: none; /* purely visual; input passes through to the game */
+}
+.oc-word { font-size: 22px; font-weight: 600; color: #f0f0f0; letter-spacing: 0.05em; }
+.oc-pinyin { font-size: 14px; color: #4ea1ff; margin: 2px 0 4px; }
+.oc-sense { font-size: 13px; color: #ccc; line-height: 1.35; }
 
 /* ── Learning-session summary ──────────────────────────────────────────────── */
 #session-view {
