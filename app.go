@@ -22,6 +22,10 @@ const (
 	// Larger window used to show the end-of-session character summary.
 	sessionWinWidth  = 540
 	sessionWinHeight = 640
+
+	// Settings form window.
+	settingsWinWidth  = 500
+	settingsWinHeight = 620
 )
 
 // UI views. Go is the single source of truth for which view the window shows;
@@ -29,9 +33,10 @@ const (
 // frontend renders exactly that view — nothing else. Adding a future mode is a
 // new constant here, a container in index.html, and a case in applyView().
 const (
-	viewCapture = "capture" // the small screenshot → OCR results card (default/home)
-	viewSession = "session" // the learning-session processing + summary screen
-	viewOverlay = "overlay" // the transparent, click-through hover-lookup overlay
+	viewCapture  = "capture"  // the small screenshot → OCR results card (default/home)
+	viewSession  = "session"  // the learning-session processing + summary screen
+	viewOverlay  = "overlay"  // the transparent, click-through hover-lookup overlay
+	viewSettings = "settings" // the settings form
 )
 
 type App struct {
@@ -53,6 +58,10 @@ type App struct {
 	ovMu        sync.Mutex
 	overlayOn   bool
 	overlayStop chan struct{}
+
+	// User settings (guarded by cfgMu).
+	cfgMu sync.Mutex
+	cfg   *Config
 }
 
 func NewApp() *App { return &App{} }
@@ -60,6 +69,7 @@ func NewApp() *App { return &App{} }
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.view = viewCapture
+	a.cfg = loadConfig()
 	// energye/systray on Linux talks to the desktop tray over DBus (the
 	// StatusNotifierItem/AppIndicator spec) — no GTK, so it coexists with
 	// Wails' GTK main loop. On Windows/macOS it uses the native tray. Run it in
@@ -68,7 +78,9 @@ func (a *App) startup(ctx context.Context) {
 
 	// Register the global hotkey that toggles the hover-lookup overlay
 	// (Windows-only; a no-op elsewhere).
-	a.initHotkey()
+	if err := a.reapplyHotkeys(*a.cfg); err != nil {
+		runtime.LogErrorf(a.ctx, "hotkeys: %v", err)
+	}
 }
 
 func (a *App) shutdown(_ context.Context) {
@@ -94,6 +106,7 @@ func (a *App) onTrayReady() {
 	mCapture := systray.AddMenuItem("Capture", "Select a screen region to OCR")
 	mSession := systray.AddMenuItem("Start learning session", sessionStartTip)
 	mShow := systray.AddMenuItem("Show window", "Open the results window")
+	mSettings := systray.AddMenuItem("Settings", "Configure shortcuts, dictionary, thresholds…")
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Exit Chinese OCR")
 
@@ -101,6 +114,7 @@ func (a *App) onTrayReady() {
 	mCapture.Click(func() { go a.Capture() })
 	mSession.Click(func() { go a.toggleSession(mSession) })
 	mShow.Click(func() { a.showCaptureWindow() })
+	mSettings.Click(func() { a.OpenSettings() })
 	mQuit.Click(func() { a.Quit() })
 
 	// Some desktop environments need an explicit menu-show on click.
@@ -162,6 +176,20 @@ func (a *App) returnToCapture() {
 func (a *App) showCaptureWindow() {
 	a.returnToCapture()
 	runtime.WindowShow(a.ctx)
+}
+
+// OpenSettings shows the settings form (tray "Settings").
+func (a *App) OpenSettings() {
+	runtime.WindowSetSize(a.ctx, settingsWinWidth, settingsWinHeight)
+	runtime.WindowCenter(a.ctx)
+	a.setView(viewSettings)
+	runtime.WindowShow(a.ctx)
+}
+
+// CloseSettings returns to the capture view and hides to the tray (form "Close").
+func (a *App) CloseSettings() {
+	a.returnToCapture()
+	runtime.WindowHide(a.ctx)
 }
 
 // Capture hides the window and grabs the screen via the platform-specific

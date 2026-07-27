@@ -1,5 +1,5 @@
 import { EventsOn } from "../wailsjs/runtime/runtime.js";
-import { Capture, HideWindow, CancelSelection, FinishSelection, ClearSession, SessionFrame, GetView, SaveCSV } from "../wailsjs/go/main/App.js";
+import { Capture, HideWindow, CancelSelection, FinishSelection, ClearSession, SessionFrame, GetView, SaveCSV, GetConfig, UpdateConfig, ListDicts, DisplayCount, CloseSettings } from "../wailsjs/go/main/App.js";
 import * as ort from "onnxruntime-web";
 import { PaddleOcrService } from "ppu-paddle-ocr/web";
 import { loadDictionary, lookup } from "./dict.js";
@@ -94,6 +94,22 @@ function segmentWords(line) {
   return out;
 }
 
+// charAdvance approximates a character's relative horizontal width, so that
+// subdividing a detected region into per-word boxes tracks real glyph positions
+// even on mixed lines: full-width CJK = 1, half-width ASCII ≈ 0.5, spaces less.
+// Uniform (width/n) subdivision drifts whenever a line isn't pure Han.
+function charAdvance(ch) {
+  if (ch === " " || ch === "\t") return 0.4;
+  const code = ch.codePointAt(0);
+  if ((code >= 0x2e80 && code <= 0x9fff) || // CJK (radicals … unified)
+      (code >= 0xf900 && code <= 0xfaff) || // CJK compatibility
+      (code >= 0xff00 && code <= 0xffef) || // full-width forms
+      (code >= 0x3000 && code <= 0x303f)) {  // CJK symbols & punctuation
+    return 1;
+  }
+  return 0.5; // half-width latin / digits / punctuation
+}
+
 // segmentWordsWithSpans is like segmentWords but also reports each word's
 // character span (UTF-16 offsets) within the line, so the overlay can carve a
 // per-word sub-box out of the line's bounding box.
@@ -130,7 +146,8 @@ function startRegionSelection(b64) {
 
   const hint = document.createElement("div");
   hint.id = "overlay-hint";
-  hint.textContent = "Glissez pour sélectionner une zone · Échap pour annuler";
+  hint.innerHTML =
+    'Glissez pour sélectionner une zone &nbsp;·&nbsp; <kbd>Échap</kbd> pour annuler';
 
   overlay.append(img, rect, hint);
   document.body.appendChild(overlay);
@@ -337,29 +354,59 @@ async function copyWord(btn, word) {
 // carve a per-word sub-box out of the line box, and look each word up. Hit-test
 // happens here (the click-through window gets no DOM mouse events).
 let overlayWords = [];              // [{ box:{x,y,w,h} image px, word, pinyin, senses }]
-let overlayOrigin = { x: 0, y: 0 }; // captured display's screen origin
+let overlayOrigin = { x: 0, y: 0 }; // captured display's origin (cursor coord space)
+// Coordinate spaces can differ (DPI virtualisation): OCR boxes are in the decoded
+// image's pixels, the cursor is in Go's GetDisplayBounds space, and the DOM is in
+// CSS px. We rescale between them from measured sizes rather than assuming.
+let overlayGoW = 1, overlayGoH = 1;   // display size in the cursor's coord space
+let overlayImgW = 1, overlayImgH = 1; // decoded image size (box coord space)
 
-async function analyzeOverlay({ image, originX, originY }) {
+// Runtime settings, loaded from Go config at boot (see GetConfig / config:change).
+let overlayMinConfidence = 0.7;             // hide OCR regions below this confidence
+let overlayDictPath = "/dicts/cedict_ts.u8"; // dictionary served path
+
+async function analyzeOverlay({ image, originX, originY, width, height }) {
   overlayOrigin = { x: originX, y: originY };
   overlayWords = [];
+  overlayGoW = width || 1;
+  overlayGoH = height || 1;
+  overlayImgW = overlayGoW; // until the image decodes (scale 1 fallback)
+  overlayImgH = overlayGoH;
   hideOverlayCard();
+
+  const dpr = window.devicePixelRatio || 1;
+  console.log(`[overlay] analyze: origin(${originX},${originY}) go-size(${width}x${height}) inner(${window.innerWidth}x${window.innerHeight}) dpr=${dpr}`); // DEBUG
+  const probe = new Image();
+  probe.onload = () => {
+    overlayImgW = probe.naturalWidth;
+    overlayImgH = probe.naturalHeight;
+    console.log(`[overlay] image natural=${overlayImgW}x${overlayImgH} → cursorScale=${(overlayImgW / overlayGoW).toFixed(3)} cardScale=${(window.innerWidth / overlayImgW).toFixed(3)}`); // DEBUG
+  };
+  probe.src = "data:image/png;base64," + image;
   if (!ocrService) return;
 
   try {
-    await loadDictionary();
+    await loadDictionary(overlayDictPath);
     const res = await ocrService.recognize(b64ToBytes(image).buffer);
-    for (const item of (res.lines ?? []).flat()) {
+    const items = (res.lines ?? []).flat();
+    console.log(`[overlay] OCR: ${items.length} regions`); // DEBUG
+    for (const item of items) {
       const text = item.text ?? "";
       const box = item.box;
       if (!box || !text) continue;
-      const n = text.length; // UTF-16 units; matches segment .index (CJK is BMP)
+      if ((item.confidence ?? 1) < overlayMinConfidence) continue; // low-confidence → skip
+      // Cumulative advance before each character (UTF-16 units, matching the
+      // segmenter's .index) so word sub-boxes track real positions on mixed lines.
+      const cum = [0];
+      for (let i = 0; i < text.length; i++) cum.push(cum[i] + charAdvance(text[i]));
+      const total = cum[text.length] || 1;
       for (const w of segmentWordsWithSpans(text)) {
         const entry = lookup(w.word);
         overlayWords.push({
           box: {
-            x: box.x + (box.width * w.start) / n,
+            x: box.x + (box.width * cum[w.start]) / total,
             y: box.y,
-            w: (box.width * (w.end - w.start)) / n,
+            w: (box.width * (cum[w.end] - cum[w.start])) / total,
             h: box.height,
           },
           word: w.word,
@@ -368,36 +415,77 @@ async function analyzeOverlay({ image, originX, originY }) {
         });
       }
     }
+    console.log(`[overlay] ${overlayWords.length} words indexed`); // DEBUG
+    if (overlayWords.length) { // DEBUG: first word's box in image coords
+      const w0 = overlayWords[0];
+      console.log(`[overlay] word0 "${w0.word}" box img x=${w0.box.x.toFixed(0)} y=${w0.box.y.toFixed(0)} w=${w0.box.w.toFixed(0)} h=${w0.box.h.toFixed(0)}`);
+    }
+    drawDebugBoxes(); // DEBUG
   } catch (err) {
     console.error("overlay analyze", err);
   }
 }
 
+let _lastCurLog = 0;
 function onOverlayCursor({ x, y }) {
-  const ix = x - overlayOrigin.x;
-  const iy = y - overlayOrigin.y;
+  // Cursor (Go/GetDisplayBounds space) → image/box space.
+  const ix = (x - overlayOrigin.x) * (overlayImgW / overlayGoW);
+  const iy = (y - overlayOrigin.y) * (overlayImgH / overlayGoH);
   const hit = overlayWords.find(
     (w) => ix >= w.box.x && ix <= w.box.x + w.box.w && iy >= w.box.y && iy <= w.box.y + w.box.h,
   );
+  const now = Date.now(); // DEBUG (throttled)
+  if (now - _lastCurLog > 250) {
+    _lastCurLog = now;
+    let extra = `hit=${hit ? hit.word : "—"}`;
+    if (!hit && overlayWords.length) {
+      let best = null, bd = Infinity;
+      for (const w of overlayWords) {
+        const d = Math.hypot(w.box.x + w.box.w / 2 - ix, w.box.y + w.box.h / 2 - iy);
+        if (d < bd) { bd = d; best = w; }
+      }
+      if (best) {
+        extra += ` nearest="${best.word}" box(${best.box.x.toFixed(0)},${best.box.y.toFixed(0)},${best.box.w.toFixed(0)}x${best.box.h.toFixed(0)}) d=(${(best.box.x - ix).toFixed(0)},${(best.box.y - iy).toFixed(0)})`;
+      }
+    }
+    console.log(`[overlay] cur screen(${x},${y}) img(${ix.toFixed(0)},${iy.toFixed(0)}) ${extra}`);
+  }
   if (hit) showOverlayCard(hit); else hideOverlayCard();
 }
 
 function showOverlayCard(w) {
   const card = document.getElementById("overlay-card");
-  const dpr = window.devicePixelRatio || 1;
   card.querySelector(".oc-word").textContent = w.word;
   card.querySelector(".oc-pinyin").textContent = w.pinyin || "—";
   card.querySelector(".oc-sense").textContent =
     w.senses.length ? w.senses.slice(0, 4).join("; ") : "(not in dictionary)";
-  // Positioned just under the word. Box is in image px == screen px for the
-  // primary display (origin cancels with the fullscreen window); CSS px = /dpr.
-  card.style.left = `${w.box.x / dpr}px`;
-  card.style.top = `${(w.box.y + w.box.h) / dpr + 4}px`;
+  // Image/box space → CSS px (the overlay window spans innerWidth CSS px).
+  const sx = window.innerWidth / overlayImgW;
+  const sy = window.innerHeight / overlayImgH;
+  card.style.left = `${w.box.x * sx}px`;
+  card.style.top = `${(w.box.y + w.box.h) * sy + 4}px`;
   card.hidden = false;
 }
 
 function hideOverlayCard() {
   document.getElementById("overlay-card").hidden = true;
+}
+
+// DEBUG: draw each hit-box over the text (image space → CSS), to see the offset.
+function drawDebugBoxes() {
+  const layer = document.getElementById("overlay-debug");
+  layer.textContent = "";
+  const sx = window.innerWidth / overlayImgW;
+  const sy = window.innerHeight / overlayImgH;
+  for (const w of overlayWords) {
+    const d = document.createElement("div");
+    d.className = "dbg-box";
+    d.style.left = `${w.box.x * sx}px`;
+    d.style.top = `${w.box.y * sy}px`;
+    d.style.width = `${w.box.w * sx}px`;
+    d.style.height = `${w.box.h * sy}px`;
+    layer.appendChild(d);
+  }
 }
 
 // ── DOM helpers ────────────────────────────────────────────────────────────
@@ -416,16 +504,130 @@ function showResult(text) {
 // pure function of it — show exactly this view's container, hide the rest. A new
 // mode = a new container + a branch here.
 function applyView(view) {
-  const isSession = view === "session";
   const isOverlay = view === "overlay";
-  document.getElementById("content").hidden = isSession || isOverlay;
-  document.getElementById("session-view").hidden = !isSession;
+  document.getElementById("content").hidden = view !== "capture";
+  document.getElementById("session-view").hidden = view !== "session";
   document.getElementById("overlay-view").hidden = !isOverlay;
+  document.getElementById("settings-view").hidden = view !== "settings";
   // The in-app titlebar must vanish in overlay mode (only the cards should show).
-  document.getElementById("titlebar").hidden = isOverlay;
+  document.getElementById("titlebar").hidden = false;
   // Transparent page background only in overlay mode (so the game shows through).
   document.body.classList.toggle("view-overlay", isOverlay);
-  if (!isOverlay) document.getElementById("overlay-card").hidden = true;
+  if (!isOverlay) {
+    document.getElementById("overlay-card").hidden = true;
+    document.getElementById("overlay-debug").textContent = ""; // DEBUG: clear hit-boxes
+  }
+  if (view === "settings") renderSettings();
+}
+
+// ── Settings form ────────────────────────────────────────────────────────────
+let currentConfig = null;
+let settingsWired = false;
+
+async function renderSettings() {
+  if (!currentConfig) {
+    try { currentConfig = await GetConfig(); } catch (e) { console.error(e); }
+  }
+  const cfg = currentConfig || {};
+
+  const dictSel = document.getElementById("set-dict");
+  try {
+    const dicts = await ListDicts();
+    dictSel.innerHTML = "";
+    for (const name of dicts) {
+      const o = document.createElement("option");
+      o.value = "/dicts/" + name;
+      o.textContent = name;
+      dictSel.appendChild(o);
+    }
+  } catch (e) { console.error(e); }
+  if (cfg.dictPath) dictSel.value = cfg.dictPath;
+
+  const dispSel = document.getElementById("set-display");
+  try {
+    const n = Math.max(1, await DisplayCount());
+    dispSel.innerHTML = "";
+    for (let i = 0; i < n; i++) {
+      const o = document.createElement("option");
+      o.value = String(i);
+      o.textContent = `Display ${i}`;
+      dispSel.appendChild(o);
+    }
+  } catch (e) { console.error(e); }
+  dispSel.value = String(cfg.captureDisplay ?? 0);
+
+  document.getElementById("set-hk-overlay").value = cfg.overlayHotkey || "";
+  document.getElementById("set-hk-capture").value = cfg.captureHotkey || "";
+  const conf = document.getElementById("set-conf");
+  conf.value = String(cfg.overlayMinConfidence ?? 0.7);
+  document.getElementById("set-conf-val").textContent = Number(conf.value).toFixed(2);
+  document.getElementById("set-maxside").value = String(cfg.detectionMaxSide ?? 0);
+  setSettingsMsg("");
+
+  if (!settingsWired) { wireSettings(); settingsWired = true; }
+}
+
+function wireSettings() {
+  const save = async (patch) => {
+    const next = { ...currentConfig, ...patch };
+    try {
+      await UpdateConfig(next);
+      currentConfig = next;
+      setSettingsMsg("Saved ✓");
+    } catch (err) {
+      setSettingsMsg(String(err.message || err), true);
+      try { await UpdateConfig(currentConfig); } catch (_) {} // re-apply last-good (restores hotkeys)
+      renderSettings();
+    }
+  };
+
+  document.getElementById("set-dict").addEventListener("change", (e) => save({ dictPath: e.target.value }));
+  document.getElementById("set-display").addEventListener("change", (e) => save({ captureDisplay: parseInt(e.target.value, 10) }));
+  document.getElementById("set-maxside").addEventListener("change", (e) => save({ detectionMaxSide: parseInt(e.target.value, 10) }));
+
+  const conf = document.getElementById("set-conf");
+  conf.addEventListener("input", () => { document.getElementById("set-conf-val").textContent = Number(conf.value).toFixed(2); });
+  conf.addEventListener("change", () => save({ overlayMinConfidence: Number(conf.value) }));
+
+  wireHotkeyInput("set-hk-overlay", "overlayHotkey", save);
+  wireHotkeyInput("set-hk-capture", "captureHotkey", save);
+  document.getElementById("set-close").addEventListener("click", () => CloseSettings());
+}
+
+// wireHotkeyInput turns a readonly text field into a shortcut recorder.
+function wireHotkeyInput(id, field, save) {
+  const input = document.getElementById(id);
+  input.addEventListener("keydown", (e) => {
+    e.preventDefault();
+    if (e.key === "Escape") { input.blur(); return; }
+    if (e.key === "Backspace" || e.key === "Delete") { input.value = ""; save({ [field]: "" }); return; }
+    const k = codeToKey(e.code);
+    if (!k) return; // waiting for a non-modifier key
+    const parts = [];
+    if (e.ctrlKey) parts.push("ctrl");
+    if (e.altKey) parts.push("alt");
+    if (e.shiftKey) parts.push("shift");
+    if (e.metaKey) parts.push("win");
+    parts.push(k);
+    const spec = parts.join("+");
+    input.value = spec;
+    save({ [field]: spec });
+  });
+}
+
+function codeToKey(code) {
+  if (/^F([1-9]|1[0-2])$/.test(code)) return code.toLowerCase();
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (code === "Space") return "space";
+  if (code === "Enter") return "enter";
+  return null;
+}
+
+function setSettingsMsg(text, isErr = false) {
+  const el = document.getElementById("set-msg");
+  el.textContent = text;
+  el.classList.toggle("err", isErr);
 }
 
 EventsOn("overlay:analyze", (frame) => analyzeOverlay(frame));
@@ -437,6 +639,15 @@ EventsOn("capture:select", (b64) => startRegionSelection(b64));
 EventsOn("session:stopped", (count) => processSession(count));
 EventsOn("session:error", (msg) => showStatus("Session error: " + msg));
 EventsOn("view:change", (view) => applyView(view));
+
+// Live-apply settings changed from the (upcoming) settings UI. Hotkeys are
+// hot-swapped in Go; here we pick up the values the frontend owns.
+EventsOn("config:change", (cfg) => {
+  if (!cfg) return;
+  currentConfig = cfg;
+  if (typeof cfg.overlayMinConfidence === "number") overlayMinConfidence = cfg.overlayMinConfidence;
+  if (cfg.dictPath) overlayDictPath = cfg.dictPath; // reloaded on next overlay analyze
+});
 
 // Sync to Go's current view on load so the window never opens on a stale view.
 GetView().then(applyView).catch((err) => console.error(err));
@@ -477,7 +688,34 @@ document.getElementById("close-btn").addEventListener("click", () => HideWindow(
   btn.disabled = true;
   showStatus("Loading OCR model…");
   try {
-    const svc = new PaddleOcrService({ model: LOCAL_MODEL });
+    // Load persisted settings (falls back to the defaults above on failure).
+    let cfgMaxSide = 0;
+    try {
+      const cfg = await GetConfig();
+      if (cfg) {
+        currentConfig = cfg;
+        if (typeof cfg.overlayMinConfidence === "number") overlayMinConfidence = cfg.overlayMinConfidence;
+        if (cfg.dictPath) overlayDictPath = cfg.dictPath;
+        if (cfg.detectionMaxSide > 0) cfgMaxSide = cfg.detectionMaxSide;
+      }
+    } catch (e) { console.error("GetConfig", e); }
+
+    // The detector downscales its input to maxSideLength before finding text
+    // (default 640 — far too low for a full screen, so most text is missed).
+    // Match the display's native pixel resolution, capped to keep WASM detection
+    // from blowing up on 4K+ screens (unless the user overrides it in settings).
+    const DETECT_MAX_CAP = 2560;
+    const nativeMax = Math.round(Math.max(screen.width, screen.height) * (window.devicePixelRatio || 1));
+    const maxSideLength = cfgMaxSide || Math.min(nativeMax, DETECT_MAX_CAP);
+    console.log(`[ocr] detection maxSideLength = ${maxSideLength}`); // DEBUG
+    // paddingHorizontal defaults to 0.6 (× line height), which extends each
+    // detected box ~0.6 char-widths left of the real text and throws off the
+    // per-word sub-box alignment (hover lands one word too far left). Hug the
+    // text horizontally so the overlay boxes line up.
+    const svc = new PaddleOcrService({
+      model: LOCAL_MODEL,
+      detection: { maxSideLength, paddingHorizontal: 0 },
+    });
     await svc.initialize();
     ocrService = svc; // only set after successful init
     btn.disabled = false;

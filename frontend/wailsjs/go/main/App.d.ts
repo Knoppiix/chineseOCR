@@ -8,11 +8,21 @@ export function Capture():Promise<void>;
 
 export function ClearSession():Promise<void>;
 
+export function CloseSettings():Promise<void>;
+
+export function DisplayCount():Promise<number>;
+
 export function FinishSelection():Promise<void>;
+
+export function GetConfig():Promise<main.Config>;
 
 export function GetView():Promise<string>;
 
 export function HideWindow():Promise<void>;
+
+export function ListDicts():Promise<Array<string>>;
+
+export function OpenSettings():Promise<void>;
 
 export function Quit():Promise<void>;
 
@@ -25,3 +35,5 @@ export function SessionFrameCount():Promise<number>;
 export function StartSession():Promise<void>;
 
 export function StopSession():Promise<number>;
+
+export function UpdateConfig(arg1:main.Config):Promise<void>;

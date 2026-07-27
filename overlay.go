@@ -16,4 +16,6 @@ type overlayFrame struct {
 	Image   string `json:"image"`
 	OriginX int    `json:"originX"`
 	OriginY int    `json:"originY"`
+	Width   int    `json:"width"`  // captured display width in the cursor's coord space
+	Height  int    `json:"height"` // captured display height in the cursor's coord space
 }

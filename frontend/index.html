@@ -25,11 +25,51 @@
          the cursor. For now it shows a fixed test card to validate the window
          plumbing; OCR/dictionary wiring comes next. -->
     <div id="overlay-view" hidden>
+      <div id="overlay-debug"></div>
       <div id="overlay-card" hidden>
         <div class="oc-word">测试</div>
         <div class="oc-pinyin">cè shì</div>
         <div class="oc-sense">test overlay — this card follows the cursor</div>
       </div>
+    </div>
+
+    <!-- Settings form. -->
+    <div id="settings-view" hidden>
+      <h2 class="settings-title">Settings</h2>
+      <div class="settings-body">
+        <label class="set-row">
+          <span>Overlay hotkey</span>
+          <input id="set-hk-overlay" class="hk-input" type="text" readonly placeholder="click &amp; press keys" />
+        </label>
+        <label class="set-row">
+          <span>Capture hotkey</span>
+          <input id="set-hk-capture" class="hk-input" type="text" readonly placeholder="click &amp; press keys" />
+        </label>
+        <label class="set-row">
+          <span>Dictionary</span>
+          <select id="set-dict"></select>
+        </label>
+        <label class="set-row">
+          <span>Min confidence <em id="set-conf-val"></em></span>
+          <input id="set-conf" type="range" min="0" max="1" step="0.05" />
+        </label>
+        <label class="set-row">
+          <span>Detection resolution</span>
+          <select id="set-maxside">
+            <option value="0">Auto</option>
+            <option value="1280">1280</option>
+            <option value="1920">1920</option>
+            <option value="2560">2560</option>
+            <option value="3840">3840</option>
+          </select>
+        </label>
+        <label class="set-row">
+          <span>Captured display</span>
+          <select id="set-display"></select>
+        </label>
+        <p id="set-msg"></p>
+      </div>
+      <div class="btn-row"><button id="set-close">Close</button></div>
     </div>
 
     <!-- Learning-session summary view (shown after a recording session stops). -->
