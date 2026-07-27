@@ -75,6 +75,8 @@ body.results {
   color: #888;
   margin-bottom: 12px;
   min-height: 1.4em;
+  user-select: text;
+  cursor: text;
 }
 
 #result.hanzi {
@@ -85,6 +87,8 @@ body.results {
   margin-bottom: 16px;
   word-break: break-all;
   min-height: 1.4em;
+  user-select: text;
+  cursor: text;
 }
 
 .btn-row {
@@ -138,17 +142,35 @@ button:active { background: #444; }
 
 #overlay-hint {
   position: absolute;
-  top: 16px;
+  top: 28px;
   left: 50%;
   transform: translateX(-50%);
-  padding: 8px 16px;
-  border-radius: 8px;
-  background: rgba(20, 20, 20, 0.85);
-  color: #e0e0e0;
+  display: flex;
+  align-items: center;
+  padding: 13px 26px;
+  border-radius: 12px;
+  border: 1px solid rgba(78, 161, 255, 0.55);
+  background: rgba(18, 18, 18, 0.92);
+  color: #f2f2f2;
   font-family: system-ui, sans-serif;
-  font-size: 13px;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
   pointer-events: none;
   user-select: none;
+}
+#overlay-hint kbd {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 6px;
+  border: 1px solid #5a5a5a;
+  border-bottom-width: 2px;
+  background: #2c2c2c;
+  color: #fff;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 /* ── Hover-lookup overlay ──────────────────────────────────────────────────── */
@@ -157,6 +179,15 @@ button:active { background: #444; }
 body.view-overlay { background: transparent; }
 
 #overlay-view { position: fixed; inset: 0; }
+
+/* DEBUG: hit-boxes drawn over the text to spot the offset. */
+#overlay-debug { position: fixed; inset: 0; pointer-events: none; }
+.dbg-box {
+  position: fixed;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 40, 40, 0.9);
+  background: rgba(255, 40, 40, 0.12);
+}
 
 #overlay-card {
   position: fixed;
@@ -172,6 +203,49 @@ body.view-overlay { background: transparent; }
 .oc-word { font-size: 22px; font-weight: 600; color: #f0f0f0; letter-spacing: 0.05em; }
 .oc-pinyin { font-size: 14px; color: #4ea1ff; margin: 2px 0 4px; }
 .oc-sense { font-size: 13px; color: #ccc; line-height: 1.35; }
+
+/* ── Settings form ─────────────────────────────────────────────────────────── */
+#settings-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 20px 18px;
+  --wails-draggable: no-drag;
+}
+.settings-title { font-size: 18px; font-weight: 600; color: #f0f0f0; margin-bottom: 12px; }
+.settings-body { flex: 1; min-height: 0; overflow-y: auto; }
+
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid #262626;
+  font-size: 14px;
+  color: #cfcfcf;
+}
+.set-row > span { flex-shrink: 0; }
+.set-row em { color: #4ea1ff; font-style: normal; font-size: 12px; }
+
+.set-row select,
+.set-row .hk-input {
+  min-width: 170px;
+  padding: 6px 10px;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  background: #222;
+  color: #eee;
+  font-size: 13px;
+  font-family: system-ui, sans-serif;
+}
+.set-row .hk-input { text-align: center; cursor: pointer; caret-color: transparent; }
+.set-row .hk-input:focus { border-color: #4ea1ff; outline: none; background: #1a2634; }
+.set-row input[type="range"] { width: 170px; accent-color: #4ea1ff; }
+
+#set-msg { min-height: 1.2em; margin-top: 10px; font-size: 13px; color: #7bbf7b; }
+#set-msg.err { color: #e07a7a; }
 
 /* ── Learning-session summary ──────────────────────────────────────────────── */
 #session-view {

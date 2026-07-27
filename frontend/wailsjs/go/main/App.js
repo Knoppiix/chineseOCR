@@ -14,8 +14,20 @@ export function ClearSession() {
   return window['go']['main']['App']['ClearSession']();
 }
 
+export function CloseSettings() {
+  return window['go']['main']['App']['CloseSettings']();
+}
+
+export function DisplayCount() {
+  return window['go']['main']['App']['DisplayCount']();
+}
+
 export function FinishSelection() {
   return window['go']['main']['App']['FinishSelection']();
+}
+
+export function GetConfig() {
+  return window['go']['main']['App']['GetConfig']();
 }
 
 export function GetView() {
@@ -24,6 +36,14 @@ export function GetView() {
 
 export function HideWindow() {
   return window['go']['main']['App']['HideWindow']();
+}
+
+export function ListDicts() {
+  return window['go']['main']['App']['ListDicts']();
+}
+
+export function OpenSettings() {
+  return window['go']['main']['App']['OpenSettings']();
 }
 
 export function Quit() {
@@ -48,4 +68,8 @@ export function StartSession() {
 
 export function StopSession() {
   return window['go']['main']['App']['StopSession']();
+}
+
+export function UpdateConfig(arg1) {
+  return window['go']['main']['App']['UpdateConfig'](arg1);
 }

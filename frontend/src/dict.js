@@ -12,10 +12,15 @@ const DICT_PATH = "/dicts/cedict_ts.u8"; // TODO: make user-selectable via the U
 
 let dict = null;      // Map<string, { pinyin, senses[] }>
 let loadPromise = null;
+let loadedPath = null;
 
 export function loadDictionary(path = DICT_PATH) {
-  if (dict) return Promise.resolve(dict);
-  if (loadPromise) return loadPromise;
+  if (path === loadedPath && (dict || loadPromise)) {
+    return dict ? Promise.resolve(dict) : loadPromise;
+  }
+  // Path changed (or first load) → (re)load.
+  loadedPath = path;
+  dict = null;
   loadPromise = (async () => {
     const res = await fetch(path);
     if (!res.ok) throw new Error(`dictionary fetch ${path}: HTTP ${res.status}`);
