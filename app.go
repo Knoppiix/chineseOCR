@@ -99,7 +99,7 @@ func (a *App) shutdown(_ context.Context) {
 // onTrayReady builds the tray icon + menu. Clicking the tray icon shows this
 // menu (rendered by the desktop shell over DBus).
 func (a *App) onTrayReady() {
-	systray.SetIcon(trayIcon)
+	systray.SetIcon(trayIconBytes)
 	systray.SetTitle("Chinese OCR")
 	systray.SetTooltip("Chinese OCR — screenshot to Chinese text")
 
@@ -204,7 +204,7 @@ func (a *App) CloseSettings() {
 func (a *App) Capture() {
 	runtime.WindowHide(a.ctx)
 
-	res, err := captureScreenshot()
+	res, err := captureScreenshot(a.captureDisplay())
 	if err != nil {
 		runtime.LogErrorf(a.ctx, "Capture: %v", err)
 		return
@@ -292,7 +292,7 @@ func (a *App) StartSession() error {
 	if a.recording {
 		return errors.New("a session is already running")
 	}
-	rec, err := newRecorder()
+	rec, err := newRecorder(a.captureDisplay())
 	if err != nil {
 		return err
 	}

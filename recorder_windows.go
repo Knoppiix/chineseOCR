@@ -25,8 +25,11 @@ type dxgiRecorder struct {
 	display uint // display index (0 = primary)
 }
 
-func newRecorder() (recorder, error) {
-	return &dxgiRecorder{display: 0}, nil
+func newRecorder(display int) (recorder, error) {
+	if display < 0 {
+		display = 0
+	}
+	return &dxgiRecorder{display: uint(display)}, nil
 }
 
 func (r *dxgiRecorder) run(ctx context.Context, onTick func(*image.RGBA, bool)) error {

@@ -72,6 +72,16 @@ func (c *Config) save() error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// captureDisplay is the display index the user chose to capture (0 if unset).
+func (a *App) captureDisplay() int {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if a.cfg == nil {
+		return 0
+	}
+	return a.cfg.CaptureDisplay
+}
+
 // GetConfig returns the current settings (the frontend reads this on boot).
 func (a *App) GetConfig() Config {
 	a.cfgMu.Lock()

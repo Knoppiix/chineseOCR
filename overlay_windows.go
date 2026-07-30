@@ -172,8 +172,9 @@ func (a *App) toggleOverlay() {
 		return
 	}
 
-	// Snapshot the display BEFORE showing our (transparent) overlay on top.
-	b64, ox, oy, w, h, err := capturePrimary()
+	// Snapshot the chosen display BEFORE showing our (transparent) overlay on top.
+	disp := a.captureDisplay()
+	b64, ox, oy, w, h, err := capturePrimary(disp)
 	if err != nil {
 		runtime.LogErrorf(a.ctx, "overlay capture: %v", err)
 		a.overlayStop = nil
@@ -184,8 +185,9 @@ func (a *App) toggleOverlay() {
 	stop := make(chan struct{})
 	a.overlayStop = stop
 
-	a.setView(viewOverlay) // let the frontend swap to the transparent card layer
-	runtime.WindowFullscreen(a.ctx)
+	a.setView(viewOverlay)                   // swap to the transparent card layer
+	runtime.WindowSetPosition(a.ctx, ox, oy) // move onto the captured display…
+	runtime.WindowFullscreen(a.ctx)          // …then fill it
 	runtime.WindowSetAlwaysOnTop(a.ctx, true)
 	runtime.WindowShow(a.ctx)
 	setClickThrough(true) // after Show so the HWND exists and is visible
@@ -197,10 +199,13 @@ func (a *App) toggleOverlay() {
 	go a.cursorLoop(stop)
 }
 
-// capturePrimary grabs the primary display and returns it as a base64 PNG plus
-// its top-left origin in virtual-screen coordinates.
-func capturePrimary() (string, int, int, int, int, error) {
-	b := screenshot.GetDisplayBounds(0)
+// capturePrimary grabs the chosen display and returns it as a base64 PNG plus
+// its top-left origin and size in virtual-screen coordinates.
+func capturePrimary(display int) (string, int, int, int, int, error) {
+	if n := screenshot.NumActiveDisplays(); display < 0 || display >= n {
+		display = 0
+	}
+	b := screenshot.GetDisplayBounds(display)
 	img, err := screenshot.CaptureRect(b)
 	if err != nil {
 		return "", 0, 0, 0, 0, err

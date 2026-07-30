@@ -23,8 +23,9 @@ import (
 // the WebKitGTK HiDPI/Wayland fullscreen scaling bug that broke the in-app
 // overlay on Linux.
 //
-// Returns (nil, nil) if the user cancels.
-func captureScreenshot() (*CaptureResult, error) {
+// Returns (nil, nil) if the user cancels. The display argument is ignored: the
+// XDG portal lets the user pick the area (and screen) interactively.
+func captureScreenshot(_ int) (*CaptureResult, error) {
 	b64, err := captureRegionViaPortal()
 	if err != nil {
 		return nil, err
