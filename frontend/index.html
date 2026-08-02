@@ -12,6 +12,12 @@
       <button id="close-btn" title="Hide to tray">×</button>
     </div>
 
+    <!-- Tab bar for the user-navigable views (hidden in overlay/settings). -->
+    <div id="tabs" hidden>
+      <button class="tab" data-view="capture">Capture</button>
+      <button class="tab" data-view="history">History</button>
+    </div>
+
     <div id="content">
       <p id="status">Loading…</p>
       <p id="result" class="hanzi"></p>
@@ -33,28 +39,46 @@
       </div>
     </div>
 
+    <!-- Archived learning sessions. -->
+    <div id="history-view" hidden>
+      <div class="hist-head">
+        <span id="hist-title">Past sessions</span>
+      </div>
+      <div id="hist-list" class="table-wrap"></div>
+    </div>
+
     <!-- Settings form. -->
     <div id="settings-view" hidden>
       <h2 class="settings-title">Settings</h2>
       <div class="settings-body">
         <label class="set-row">
-          <span>Overlay hotkey</span>
+          <span>Overlay hotkey
+            <i class="help" data-tip="Global shortcut that toggles the hover overlay: it freezes the screen's text and shows pinyin + meaning for the word under your mouse.">?</i>
+          </span>
           <input id="set-hk-overlay" class="hk-input" type="text" readonly placeholder="click &amp; press keys" />
         </label>
         <label class="set-row">
-          <span>Capture hotkey</span>
+          <span>Capture hotkey
+            <i class="help" data-tip="Global shortcut that starts a screenshot: you drag a region and its Chinese text is extracted.">?</i>
+          </span>
           <input id="set-hk-capture" class="hk-input" type="text" readonly placeholder="click &amp; press keys" />
         </label>
         <label class="set-row">
-          <span>Dictionary</span>
+          <span>Dictionary
+            <i class="help" data-tip="Dictionary file used for pinyin and definitions. Drop other CC-CEDICT/CFDICT files (.u8) into the dicts folder to add languages.">?</i>
+          </span>
           <select id="set-dict"></select>
         </label>
         <label class="set-row">
-          <span>Min confidence <em id="set-conf-val"></em></span>
+          <span>Min confidence <em id="set-conf-val"></em>
+            <i class="help" data-tip="How sure the OCR must be before a word is shown. Higher = fewer mistakes but some text ignored; lower = more text but more noise.">?</i>
+          </span>
           <input id="set-conf" type="range" min="0" max="1" step="0.05" />
         </label>
         <label class="set-row">
-          <span>Detection resolution</span>
+          <span>Detection resolution
+            <i class="help" data-tip="Image size the text detector works at. Higher finds smaller text but is slower; Auto matches your screen (capped at 2560).">?</i>
+          </span>
           <select id="set-maxside">
             <option value="0">Auto</option>
             <option value="1280">1280</option>
@@ -64,9 +88,12 @@
           </select>
         </label>
         <label class="set-row">
-          <span>Captured display</span>
+          <span>Captured display
+            <i class="help" data-tip="Which monitor the screenshot, overlay and learning session capture. The map below shows your monitor layout.">?</i>
+          </span>
           <select id="set-display"></select>
         </label>
+        <div id="set-display-map" class="display-map"></div>
         <p id="set-msg"></p>
       </div>
       <div class="btn-row"><button id="set-close">Close</button></div>

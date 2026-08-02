@@ -35,6 +35,7 @@ const (
 const (
 	viewCapture  = "capture"  // the small screenshot → OCR results card (default/home)
 	viewSession  = "session"  // the learning-session processing + summary screen
+	viewHistory  = "history"  // the archived-sessions list
 	viewOverlay  = "overlay"  // the transparent, click-through hover-lookup overlay
 	viewSettings = "settings" // the settings form
 )
@@ -120,6 +121,8 @@ func (a *App) onTrayReady() {
 	// Some desktop environments need an explicit menu-show on click.
 	systray.SetOnClick(func(menu systray.IMenu) { _ = menu.ShowMenu() })
 	systray.SetOnRClick(func(menu systray.IMenu) { _ = menu.ShowMenu() })
+	// Double-click opens the window (ShareX-style).
+	systray.SetOnDClick(func(systray.IMenu) { a.showCaptureWindow() })
 }
 
 // Quit tears down the tray then exits the application.
@@ -176,6 +179,18 @@ func (a *App) returnToCapture() {
 func (a *App) showCaptureWindow() {
 	a.returnToCapture()
 	runtime.WindowShow(a.ctx)
+}
+
+// SetViewByName lets the frontend's tab bar switch between the user-navigable
+// views while Go stays the source of truth. Unknown names are ignored.
+func (a *App) SetViewByName(name string) {
+	switch name {
+	case viewCapture:
+		a.returnToCapture()
+	case viewHistory, viewSession:
+		runtime.WindowSetSize(a.ctx, sessionWinWidth, sessionWinHeight)
+		a.setView(name)
+	}
 }
 
 // OpenSettings shows the settings form (tray "Settings").
@@ -313,6 +328,9 @@ func (a *App) StartSession() error {
 	a.sessDir = dir
 
 	runtime.WindowHide(a.ctx) // get out of the way while recording
+	// Visible feedback that the screen is being recorded.
+	systray.SetIcon(recordingIconBytes)
+	systray.SetTooltip("Chinese OCR — ● recording a learning session")
 
 	go func() {
 		defer close(done)
@@ -343,6 +361,9 @@ func (a *App) StopSession() (int, error) {
 
 	cancel()
 	<-done // capture loop has now exited and finalized durations
+
+	systray.SetIcon(trayIconBytes) // back to the idle icon
+	systray.SetTooltip("Chinese OCR — screenshot to Chinese text")
 
 	count := len(proc.frames)
 	runtime.WindowSetSize(a.ctx, sessionWinWidth, sessionWinHeight)

@@ -10,6 +10,8 @@ export function ClearSession():Promise<void>;
 
 export function CloseSettings():Promise<void>;
 
+export function DeleteSession(arg1:string):Promise<void>;
+
 export function DisplayCount():Promise<number>;
 
 export function FinishSelection():Promise<void>;
@@ -22,15 +24,25 @@ export function HideWindow():Promise<void>;
 
 export function ListDicts():Promise<Array<string>>;
 
+export function ListDisplays():Promise<Array<main.DisplayInfo>>;
+
+export function ListSessions():Promise<Array<main.SessionMeta>>;
+
+export function LoadSession(arg1:string):Promise<main.SessionRecord>;
+
 export function OpenSettings():Promise<void>;
 
 export function Quit():Promise<void>;
 
 export function SaveCSV(arg1:string,arg2:string):Promise<string>;
 
+export function SaveSessionSummary(arg1:number,arg2:Array<main.SessionWord>):Promise<string>;
+
 export function SessionFrame(arg1:number):Promise<main.FrameMeta>;
 
 export function SessionFrameCount():Promise<number>;
+
+export function SetViewByName(arg1:string):Promise<void>;
 
 export function StartSession():Promise<void>;
 

@@ -30,6 +30,26 @@ var (
 // DisplayCount reports the number of active displays (for the settings dropdown).
 func (a *App) DisplayCount() int { return screenshot.NumActiveDisplays() }
 
+// ListDisplays describes every active monitor so the settings screen can show a
+// layout map. The primary display is the one whose origin is (0,0) — Windows
+// defines the virtual desktop that way.
+func (a *App) ListDisplays() []DisplayInfo {
+	n := screenshot.NumActiveDisplays()
+	out := make([]DisplayInfo, 0, n)
+	for i := 0; i < n; i++ {
+		b := screenshot.GetDisplayBounds(i)
+		out = append(out, DisplayInfo{
+			Index:   i,
+			X:       b.Min.X,
+			Y:       b.Min.Y,
+			Width:   b.Dx(),
+			Height:  b.Dy(),
+			Primary: b.Min.X == 0 && b.Min.Y == 0,
+		})
+	}
+	return out
+}
+
 // reapplyHotkeys (re)binds every global shortcut from the config — at runtime,
 // no restart.
 func (a *App) reapplyHotkeys(cfg Config) error {

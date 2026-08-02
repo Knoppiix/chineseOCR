@@ -8,6 +8,17 @@ type cursorPos struct {
 	Y int `json:"y"`
 }
 
+// DisplayInfo describes one monitor, for the settings screen picker: its index,
+// bounds in virtual-screen coordinates, and whether it is the primary display.
+type DisplayInfo struct {
+	Index   int  `json:"index"`
+	X       int  `json:"x"`
+	Y       int  `json:"y"`
+	Width   int  `json:"width"`
+	Height  int  `json:"height"`
+	Primary bool `json:"primary"`
+}
+
 // overlayFrame is the snapshot handed to the frontend when the overlay opens
 // (the "overlay:analyze" event): a base64 PNG of the captured display plus that
 // display's top-left origin in virtual-screen coordinates, so the frontend can

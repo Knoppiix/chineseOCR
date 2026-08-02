@@ -1,5 +1,5 @@
 import { EventsOn } from "../wailsjs/runtime/runtime.js";
-import { Capture, HideWindow, CancelSelection, FinishSelection, ClearSession, SessionFrame, GetView, SaveCSV, GetConfig, UpdateConfig, ListDicts, DisplayCount, CloseSettings } from "../wailsjs/go/main/App.js";
+import { Capture, HideWindow, CancelSelection, FinishSelection, ClearSession, SessionFrame, GetView, SaveCSV, GetConfig, UpdateConfig, ListDicts, CloseSettings, ListDisplays, SetViewByName, SaveSessionSummary, ListSessions, LoadSession, DeleteSession } from "../wailsjs/go/main/App.js";
 import * as ort from "onnxruntime-web";
 import { PaddleOcrService } from "ppu-paddle-ocr/web";
 import { loadDictionary, lookup } from "./dict.js";
@@ -282,6 +282,18 @@ async function processSession(count) {
   }
   bar.style.width = "100%";
   sessionTally = tally;
+  viewingArchived = false;
+
+  // Archive the summary so it survives closing the window (History tab).
+  if (tally.size) {
+    try {
+      await SaveSessionSummary(count, [...tally.entries()].map(([word, e]) => ({
+        word, count: e.count, ms: Math.round(e.ms),
+      })));
+    } catch (err) {
+      console.error("save session", err);
+    }
+  }
   renderSummary("count");
 }
 
@@ -488,6 +500,70 @@ function drawDebugBoxes() {
   }
 }
 
+// ── Session history ──────────────────────────────────────────────────────────
+// Every finished session is archived by Go (JSON next to the config), so closing
+// the window no longer loses the summary — reopen it from the History tab.
+let viewingArchived = false;
+
+async function renderHistory() {
+  const list = document.getElementById("hist-list");
+  list.textContent = "";
+  let sessions = [];
+  try { sessions = await ListSessions(); } catch (err) { console.error(err); }
+
+  document.getElementById("hist-title").textContent = sessions.length
+    ? `${sessions.length} past session${sessions.length > 1 ? "s" : ""}`
+    : "No past sessions yet";
+
+  const table = document.createElement("table");
+  const tbody = document.createElement("tbody");
+  for (const s of sessions) {
+    const tr = document.createElement("tr");
+
+    const when = document.createElement("td");
+    when.textContent = formatWhen(s.savedAt);
+
+    const info = document.createElement("td");
+    info.textContent = `${s.words} words · ${s.frames} frames`;
+    info.className = "hist-info";
+
+    const actions = document.createElement("td");
+    actions.className = "hist-actions";
+    const open = document.createElement("button");
+    open.textContent = "Open";
+    open.addEventListener("click", () => openArchivedSession(s.id));
+    const del = document.createElement("button");
+    del.textContent = "✕";
+    del.title = "Delete this session";
+    del.addEventListener("click", async () => {
+      try { await DeleteSession(s.id); renderHistory(); } catch (err) { console.error(err); }
+    });
+    actions.append(open, del);
+
+    tr.append(when, info, actions);
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  list.appendChild(table);
+}
+
+async function openArchivedSession(id) {
+  try {
+    const rec = await LoadSession(id);
+    sessionTally = new Map((rec.words || []).map((w) => [w.word, { count: w.count, ms: w.ms }]));
+    viewingArchived = true;
+    await SetViewByName("session"); // Go switches the view; then fill it in
+    renderSummary("count");
+  } catch (err) {
+    console.error("open session", err);
+  }
+}
+
+function formatWhen(iso) {
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString();
+}
+
 // ── DOM helpers ────────────────────────────────────────────────────────────
 function showStatus(msg) {
   document.getElementById("status").textContent = msg;
@@ -507,8 +583,18 @@ function applyView(view) {
   const isOverlay = view === "overlay";
   document.getElementById("content").hidden = view !== "capture";
   document.getElementById("session-view").hidden = view !== "session";
+  document.getElementById("history-view").hidden = view !== "history";
   document.getElementById("overlay-view").hidden = !isOverlay;
   document.getElementById("settings-view").hidden = view !== "settings";
+
+  // Tabs only make sense on the navigable views.
+  const tabbed = view === "capture" || view === "history" || view === "session";
+  document.getElementById("tabs").hidden = !tabbed;
+  for (const t of document.querySelectorAll("#tabs .tab")) {
+    const target = t.dataset.view === "history" ? ["history", "session"] : ["capture"];
+    t.classList.toggle("active", target.includes(view));
+  }
+  if (view === "history") renderHistory();
   // The in-app titlebar must vanish in overlay mode (only the cards should show).
   document.getElementById("titlebar").hidden = false;
   // Transparent page background only in overlay mode (so the game shows through).
@@ -523,6 +609,39 @@ function applyView(view) {
 // ── Settings form ────────────────────────────────────────────────────────────
 let currentConfig = null;
 let settingsWired = false;
+let knownDisplays = [];
+
+// drawDisplayMap renders the monitor layout to scale (like Windows' display
+// settings) with the selected one highlighted, so "Display 1" is unambiguous.
+function drawDisplayMap(selected) {
+  const map = document.getElementById("set-display-map");
+  map.textContent = "";
+  if (!knownDisplays.length) return;
+
+  const minX = Math.min(...knownDisplays.map((d) => d.x));
+  const minY = Math.min(...knownDisplays.map((d) => d.y));
+  const maxX = Math.max(...knownDisplays.map((d) => d.x + d.width));
+  const maxY = Math.max(...knownDisplays.map((d) => d.y + d.height));
+  const mapW = map.clientWidth || 440; // fall back if measured before layout
+  const scale = Math.min(mapW / (maxX - minX || 1), 90 / (maxY - minY || 1));
+
+  for (const d of knownDisplays) {
+    const el = document.createElement("div");
+    el.className = "disp" + (d.index === selected ? " sel" : "");
+    el.style.left = `${(d.x - minX) * scale}px`;
+    el.style.top = `${(d.y - minY) * scale}px`;
+    el.style.width = `${d.width * scale}px`;
+    el.style.height = `${d.height * scale}px`;
+    el.textContent = String(d.index) + (d.primary ? " ★" : "");
+    el.title = `Display ${d.index}${d.primary ? " (main)" : ""} — ${d.width}×${d.height}`;
+    el.addEventListener("click", () => {
+      const sel = document.getElementById("set-display");
+      sel.value = String(d.index);
+      sel.dispatchEvent(new Event("change"));
+    });
+    map.appendChild(el);
+  }
+}
 
 async function renderSettings() {
   if (!currentConfig) {
@@ -545,16 +664,17 @@ async function renderSettings() {
 
   const dispSel = document.getElementById("set-display");
   try {
-    const n = Math.max(1, await DisplayCount());
+    knownDisplays = await ListDisplays();
     dispSel.innerHTML = "";
-    for (let i = 0; i < n; i++) {
+    for (const d of knownDisplays) {
       const o = document.createElement("option");
-      o.value = String(i);
-      o.textContent = `Display ${i}`;
+      o.value = String(d.index);
+      o.textContent = `Display ${d.index}${d.primary ? " (main)" : ""} — ${d.width}×${d.height}`;
       dispSel.appendChild(o);
     }
   } catch (e) { console.error(e); }
   dispSel.value = String(cfg.captureDisplay ?? 0);
+  drawDisplayMap(parseInt(dispSel.value, 10));
 
   document.getElementById("set-hk-overlay").value = cfg.overlayHotkey || "";
   document.getElementById("set-hk-capture").value = cfg.captureHotkey || "";
@@ -582,7 +702,11 @@ function wireSettings() {
   };
 
   document.getElementById("set-dict").addEventListener("change", (e) => save({ dictPath: e.target.value }));
-  document.getElementById("set-display").addEventListener("change", (e) => save({ captureDisplay: parseInt(e.target.value, 10) }));
+  document.getElementById("set-display").addEventListener("change", (e) => {
+    const idx = parseInt(e.target.value, 10);
+    drawDisplayMap(idx); // highlight the newly chosen monitor
+    save({ captureDisplay: idx });
+  });
   document.getElementById("set-maxside").addEventListener("change", (e) => save({ detectionMaxSide: parseInt(e.target.value, 10) }));
 
   const conf = document.getElementById("set-conf");
@@ -672,12 +796,25 @@ document.getElementById("export-csv").addEventListener("click", async () => {
   }
 });
 
-// Done: drop the on-disk frames and return to the capture view (ClearSession
-// switches the view via Go's "view:change"), then hide to the tray.
+// Done: from an archived session just go back to the list; from a fresh one drop
+// the on-disk frames and return to the capture view, then hide to the tray.
 document.getElementById("session-done").addEventListener("click", async () => {
+  if (viewingArchived) {
+    viewingArchived = false;
+    SetViewByName("history");
+    return;
+  }
   try { await ClearSession(); } catch (err) { console.error(err); }
   HideWindow();
 });
+
+// Tab bar: Go owns the view, so just ask it to switch.
+for (const t of document.querySelectorAll("#tabs .tab")) {
+  t.addEventListener("click", () => {
+    viewingArchived = false;
+    SetViewByName(t.dataset.view);
+  });
+}
 
 // × returns the window to the tray; the app keeps running. Quit from the tray.
 document.getElementById("close-btn").addEventListener("click", () => HideWindow());
